@@ -1,7 +1,10 @@
 package com.justbash;
 
+import com.justbash.ast.ScriptNode;
 import com.justbash.fs.IFileSystem;
 import com.justbash.fs.InMemoryFs;
+import com.justbash.interpreter.*;
+import com.justbash.interpreter.errors.ParseException;
 import com.justbash.parser.Parser;
 import com.justbash.security.ExecutionLimits;
 import java.util.*;
@@ -55,12 +58,29 @@ public class Bash {
     }
 
     private BashExecResult executeSync(String commandLine, ExecOptions options) {
-        // TODO: Full interpreter integration
-        // For now, parse and return empty result
         try {
             var ast = Parser.parse(commandLine);
+            if (ast instanceof ScriptNode script) {
+                InterpreterState state = InterpreterState.defaults();
+                // Copy current env into state
+                state.getEnv().putAll(this.env);
+                state.setCwd(this.cwd);
+
+                InterpreterOptions interpOptions = new InterpreterOptions(
+                    this.fs,
+                    this.commands,
+                    this.limits,
+                    (scriptStr, execOpts) -> exec(scriptStr, execOpts)
+                );
+
+                Interpreter interpreter = new Interpreter(interpOptions, state);
+                BashExecResult result = interpreter.executeScript(script);
+                // Update env from interpreter state
+                this.env = new LinkedHashMap<>(state.getEnv());
+                return result;
+            }
             return new BashExecResult("", "", 0, Map.copyOf(env));
-        } catch (com.justbash.interpreter.errors.ParseException e) {
+        } catch (ParseException e) {
             return new BashExecResult("",
                 "bash: syntax error: " + e.getMessage() + "\n", 2, Map.copyOf(env));
         }

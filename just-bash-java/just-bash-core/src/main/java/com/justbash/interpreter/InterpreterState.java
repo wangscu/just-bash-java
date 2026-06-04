@@ -286,4 +286,29 @@ public class InterpreterState {
             this.tempEnvBindings.removeLast();
         }
     }
+
+    // Getters and setters for external access
+    public Map<String, String> getEnv() {
+        return env;
+    }
+
+    public void setEnv(Map<String, String> env) {
+        this.env = env;
+    }
+
+    public String getCwd() {
+        return cwd;
+    }
+
+    public void setCwd(String cwd) {
+        this.cwd = cwd;
+    }
+
+    public int getLastExitCode() {
+        return lastExitCode;
+    }
+
+    public void setLastExitCode(int lastExitCode) {
+        this.lastExitCode = lastExitCode;
+    }
 }
