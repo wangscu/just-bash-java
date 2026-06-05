@@ -5,6 +5,7 @@ import com.justbash.ExecResult;
 import com.justbash.ast.*;
 import com.justbash.ast.command.*;
 import com.justbash.ast.word.WordNode;
+import com.justbash.fs.IFileSystem;
 import com.justbash.interpreter.errors.*;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,37 +24,44 @@ public class Interpreter {
         this.options = options;
         this.state = state;
         this.pipelineExecutor = new PipelineExecutor(this);
-        this.builtins = new BuiltinDispatcher(options.fs());
+        this.builtins = new BuiltinDispatcher(this);
     }
 
     public InterpreterState getState() { return state; }
+    public IFileSystem getFs() { return options.fs(); }
 
-    /** Execute a ScriptNode (top-level entry point) */
-    public BashExecResult executeScript(ScriptNode script) {
+    /** Execute a ScriptNode without catching ExitException/ReturnException.
+     *  Used by eval and source so that `eval "exit 42"` propagates up. */
+    public ExecResult executeScriptRaw(ScriptNode script) {
         String stdout = "";
         String stderr = "";
         int exitCode = 0;
 
         for (StatementNode stmt : script.statements()) {
-            try {
-                var result = executeStatement(stmt);
-                stdout += result.stdout();
-                stderr += result.stderr();
-                exitCode = result.exitCode();
-                state.lastExitCode = exitCode;
-                state.env.put("?", String.valueOf(exitCode));
-            } catch (ExitException e) {
-                return new BashExecResult(stdout + e.stdout(), stderr + e.stderr(), e.exitCode(), Map.copyOf(state.env));
-            } catch (ReturnException e) {
-                // Return at top level: set exit code and stop
-                exitCode = e.exitCode();
-                state.lastExitCode = exitCode;
-                state.env.put("?", String.valueOf(exitCode));
-                break;
-            }
+            var result = executeStatement(stmt);
+            stdout += result.stdout();
+            stderr += result.stderr();
+            exitCode = result.exitCode();
+            state.lastExitCode = exitCode;
+            state.env.put("?", String.valueOf(exitCode));
         }
 
-        return new BashExecResult(stdout, stderr, exitCode, Map.copyOf(state.env));
+        return new ExecResult(stdout, stderr, exitCode);
+    }
+
+    /** Execute a ScriptNode (top-level entry point) */
+    public BashExecResult executeScript(ScriptNode script) {
+        try {
+            var result = executeScriptRaw(script);
+            return new BashExecResult(result.stdout(), result.stderr(), result.exitCode(), Map.copyOf(state.env));
+        } catch (ExitException e) {
+            return new BashExecResult(e.stdout(), e.stderr(), e.exitCode(), Map.copyOf(state.env));
+        } catch (ReturnException e) {
+            // Return at top level: set exit code and stop
+            state.lastExitCode = e.exitCode();
+            state.env.put("?", String.valueOf(e.exitCode()));
+            return new BashExecResult("", "", e.exitCode(), Map.copyOf(state.env));
+        }
     }
 
     /** Execute a StatementNode (handles &&, || between pipelines) */

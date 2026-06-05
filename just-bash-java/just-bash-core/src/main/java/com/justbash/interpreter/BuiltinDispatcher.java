@@ -1,20 +1,27 @@
 package com.justbash.interpreter;
 
 import com.justbash.ExecResult;
+import com.justbash.ast.ScriptNode;
 import com.justbash.fs.FsStat;
 import com.justbash.fs.IFileSystem;
 import com.justbash.interpreter.errors.ExitException;
+import com.justbash.interpreter.errors.ParseException;
+import com.justbash.parser.Parser;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 public class BuiltinDispatcher {
 
+    private final Interpreter interpreter;
     private final IFileSystem fs;
 
-    public BuiltinDispatcher(IFileSystem fs) {
-        this.fs = fs;
+    public BuiltinDispatcher(Interpreter interpreter) {
+        this.interpreter = interpreter;
+        this.fs = interpreter.getFs();
     }
 
     public Optional<ExecResult> dispatch(String name, List<String> args, InterpreterState state) {
@@ -27,6 +34,11 @@ public class BuiltinDispatcher {
             case "export" -> Optional.of(handleExport(args, state));
             case "unset" -> Optional.of(handleUnset(args, state));
             case "exit" -> Optional.of(handleExit(args, state));
+            case "eval" -> Optional.of(handleEval(args, state));
+            case "source", "." -> Optional.of(handleSource(args, state));
+            case "local" -> Optional.of(handleLocal(args, state));
+            case "declare", "typeset" -> Optional.of(handleDeclare(args, state));
+            case "read" -> Optional.of(handleRead(args, state));
             default -> Optional.empty();
         };
     }
@@ -235,5 +247,240 @@ public class BuiltinDispatcher {
         }
 
         throw new ExitException(exitCode, "", stderr);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 5B: eval, source, local, declare, read
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private ExecResult handleEval(List<String> args, InterpreterState state) {
+        // Handle options: -- ends option processing
+        List<String> evalArgs = new ArrayList<>(args);
+        if (!evalArgs.isEmpty()) {
+            String first = evalArgs.get(0);
+            if (first.equals("--")) {
+                evalArgs = evalArgs.subList(1, evalArgs.size());
+            } else if (first.startsWith("-") && !first.equals("-") && first.length() > 1) {
+                return new ExecResult("",
+                    "bash: eval: " + first + ": invalid option\neval: usage: eval [arg ...]\n", 2);
+            }
+        }
+
+        if (evalArgs.isEmpty()) {
+            return new ExecResult("", "", 0);
+        }
+
+        String command = String.join(" ", evalArgs);
+        if (command.trim().isEmpty()) {
+            return new ExecResult("", "", 0);
+        }
+
+        // Parse and execute — let ExitException / ReturnException propagate
+        try {
+            ScriptNode ast = Parser.parse(command);
+            return interpreter.executeScriptRaw(ast);
+        } catch (ParseException e) {
+            return new ExecResult("", "bash: syntax error: " + e.getMessage() + "\n", 2);
+        }
+    }
+
+    private ExecResult handleSource(List<String> args, InterpreterState state) {
+        List<String> sourceArgs = new ArrayList<>(args);
+        if (!sourceArgs.isEmpty() && sourceArgs.get(0).equals("--")) {
+            sourceArgs = sourceArgs.subList(1, sourceArgs.size());
+        }
+
+        if (sourceArgs.isEmpty()) {
+            return new ExecResult("", "bash: source: filename argument required\n", 2);
+        }
+
+        String filename = sourceArgs.get(0);
+        String path = filename.startsWith("/") ? filename : state.cwd + "/" + filename;
+
+        try {
+            String content = fs.readFile(path).join();
+            ScriptNode ast = Parser.parse(content);
+            return interpreter.executeScriptRaw(ast);
+        } catch (Exception e) {
+            return new ExecResult("", "bash: " + filename + ": No such file or directory\n", 1);
+        }
+    }
+
+    private ExecResult handleLocal(List<String> args, InterpreterState state) {
+        if (state.localScopes.isEmpty()) {
+            return new ExecResult("", "bash: local: can only be used in a function\n", 1);
+        }
+
+        Map<String, String> currentScope = state.localScopes.get(state.localScopes.size() - 1);
+        String stderr = "";
+        int exitCode = 0;
+
+        for (String arg : args) {
+            if (arg.startsWith("-") && !arg.equals("-")) {
+                // Ignore flags for MVP
+                continue;
+            }
+
+            String name;
+            String value;
+            if (arg.contains("=")) {
+                int idx = arg.indexOf("=");
+                name = arg.substring(0, idx);
+                value = arg.substring(idx + 1);
+            } else {
+                name = arg;
+                value = null;
+            }
+
+            // Save current value to local scope (only on first local declaration in this scope)
+            if (!currentScope.containsKey(name)) {
+                String currentValue = state.env.get(name);
+                currentScope.put(name, currentValue != null ? currentValue : "__UNSET__");
+            }
+
+            // Set new value
+            if (value != null) {
+                state.env.put(name, value);
+            }
+        }
+
+        return new ExecResult("", stderr, exitCode);
+    }
+
+    private ExecResult handleDeclare(List<String> args, InterpreterState state) {
+        boolean exportFlag = false;
+        boolean readonlyFlag = false;
+        boolean integerFlag = false;
+        List<String> processed = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-x")) {
+                exportFlag = true;
+            } else if (arg.equals("-r")) {
+                readonlyFlag = true;
+            } else if (arg.equals("-i")) {
+                integerFlag = true;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                // Handle combined flags like -xr, -ri, etc.
+                for (char c : arg.substring(1).toCharArray()) {
+                    if (c == 'x') exportFlag = true;
+                    else if (c == 'r') readonlyFlag = true;
+                    else if (c == 'i') integerFlag = true;
+                }
+            } else {
+                processed.add(arg);
+            }
+        }
+
+        if (processed.isEmpty()) {
+            // Print all variables
+            StringBuilder stdout = new StringBuilder();
+            List<String> sorted = new ArrayList<>(state.env.keySet());
+            Collections.sort(sorted);
+            for (String name : sorted) {
+                if (name.equals("?")) continue; // skip special $?
+                String value = state.env.get(name);
+                String attrs = "";
+                if (state.readonlyVars.contains(name)) attrs += " -r";
+                if (state.integerVars.contains(name)) attrs += " -i";
+                if (state.exportedVars.contains(name)) attrs += " -x";
+                if (attrs.isEmpty()) attrs = " --";
+                stdout.append("declare").append(attrs).append(" ").append(name).append("=\"").append(value).append("\"\n");
+            }
+            return new ExecResult(stdout.toString(), "", 0);
+        }
+
+        for (String arg : processed) {
+            String name;
+            String value;
+            if (arg.contains("=")) {
+                int idx = arg.indexOf("=");
+                name = arg.substring(0, idx);
+                value = arg.substring(idx + 1);
+            } else {
+                name = arg;
+                value = state.env.get(name);
+            }
+
+            if (value != null) {
+                state.env.put(name, value);
+            }
+            if (exportFlag) state.exportedVars.add(name);
+            if (readonlyFlag) state.readonlyVars.add(name);
+            if (integerFlag) state.integerVars.add(name);
+        }
+
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handleRead(List<String> args, InterpreterState state) {
+        boolean raw = false;
+        List<String> varNames = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-r")) {
+                raw = true;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                // Ignore other options for MVP
+            } else {
+                varNames.add(arg);
+            }
+        }
+
+        if (varNames.isEmpty()) {
+            varNames.add("REPLY");
+        }
+
+        // Get stdin from groupStdin or empty
+        String stdin = state.groupStdin != null ? state.groupStdin : "";
+
+        // Find newline delimiter
+        int newlineIdx = stdin.indexOf('\n');
+        String line;
+        if (newlineIdx >= 0) {
+            line = stdin.substring(0, newlineIdx);
+            state.groupStdin = stdin.substring(newlineIdx + 1);
+        } else {
+            line = stdin;
+            state.groupStdin = "";
+        }
+
+        // Handle backslash continuation unless -r
+        if (!raw && line.endsWith("\\")) {
+            line = line.substring(0, line.length() - 1);
+        }
+
+        // Split by IFS
+        String ifs = state.env.getOrDefault("IFS", " \t\n");
+        String[] fields;
+        if (ifs.contains(" ") && ifs.contains("\t")) {
+            fields = line.split("[ \\t]+", varNames.size());
+        } else {
+            String regex = "[" + Pattern.quote(ifs) + "]+";
+            fields = line.split(regex, varNames.size());
+        }
+
+        // Assign to variables
+        for (int i = 0; i < varNames.size(); i++) {
+            String value;
+            if (i < fields.length) {
+                if (i == varNames.size() - 1) {
+                    // Last variable gets all remaining fields
+                    StringBuilder remaining = new StringBuilder();
+                    for (int j = i; j < fields.length; j++) {
+                        if (j > i) remaining.append(" ");
+                        remaining.append(fields[j]);
+                    }
+                    value = remaining.toString();
+                } else {
+                    value = fields[i];
+                }
+            } else {
+                value = "";
+            }
+            state.env.put(varNames.get(i), value);
+        }
+
+        return new ExecResult("", "", 0);
     }
 }
