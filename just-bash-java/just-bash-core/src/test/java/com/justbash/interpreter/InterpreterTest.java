@@ -215,12 +215,9 @@ class InterpreterTest {
     @Test
     void endToEndPrefixAssignment() {
         Bash bash = new Bash();
-        // Note: parser currently treats $FOO as literal, not parameter expansion
-        // So this tests that the assignment is made but $FOO is literal
         var result = bash.exec("FOO=bar echo $FOO").join();
-        // Parser limitation: $FOO is parsed as literal "$FOO", not parameter expansion
-        // The assignment still happens (FOO=bar is in env), but $FOO isn't expanded
-        assertThat(result.stdout()).isEqualTo("$FOO\n");
+        // Prefix assignment sets FOO=bar in env, then $FOO expands to bar
+        assertThat(result.stdout()).isEqualTo("bar\n");
         assertThat(result.exitCode()).isEqualTo(0);
         bash.shutdown();
     }

@@ -96,6 +96,14 @@ public class Lexer {
             advance();
             return new Token(TokenType.BANG, "!", startLine, startCol);
         }
+        if (c == '{') {
+            advance();
+            return new Token(TokenType.LBRACE, "{", startLine, startCol);
+        }
+        if (c == '}') {
+            advance();
+            return new Token(TokenType.RBRACE, "}", startLine, startCol);
+        }
         if (c == '#') {
             skipComment();
             return null;
@@ -139,7 +147,7 @@ public class Lexer {
     }
 
     private boolean isWordDelimiter(char c) {
-        return Character.isWhitespace(c) || ";|&<>()!\n#".indexOf(c) >= 0;
+        return Character.isWhitespace(c) || ";|&<>()!{}\n#".indexOf(c) >= 0;
     }
 
     private void skipWhitespace() {

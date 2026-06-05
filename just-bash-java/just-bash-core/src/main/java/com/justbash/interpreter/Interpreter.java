@@ -82,10 +82,20 @@ public class Interpreter {
             if (operator == StatementNode.StatementOperator.AND && exitCode != 0) continue;
             if (operator == StatementNode.StatementOperator.OR && exitCode == 0) continue;
 
-            var result = pipelineExecutor.executePipeline(pipelines.get(i), state);
-            stdout += result.stdout();
-            stderr += result.stderr();
-            exitCode = result.exitCode();
+            try {
+                var result = pipelineExecutor.executePipeline(pipelines.get(i), state);
+                stdout += result.stdout();
+                stderr += result.stderr();
+                exitCode = result.exitCode();
+            } catch (BreakException e) {
+                e.setStdout(e.stdout() + stdout);
+                e.setStderr(e.stderr() + stderr);
+                throw e;
+            } catch (ContinueException e) {
+                e.setStdout(e.stdout() + stdout);
+                e.setStderr(e.stderr() + stderr);
+                throw e;
+            }
             state.lastExitCode = exitCode;
             state.env.put("?", String.valueOf(exitCode));
         }
@@ -97,8 +107,153 @@ public class Interpreter {
     public ExecResult executeCommand(CommandNode cmd, String stdin) {
         return switch (cmd) {
             case SimpleCommandNode simple -> executeSimpleCommand(simple, stdin);
+            case IfNode ifNode -> executeIfCommand(ifNode, stdin);
+            case ForNode forNode -> executeForCommand(forNode, stdin);
+            case WhileNode whileNode -> executeWhileCommand(whileNode, stdin);
+            case GroupNode group -> executeGroupCommand(group, stdin);
+            case SubshellNode subshell -> executeSubshellCommand(subshell, stdin);
             default -> new ExecResult("", "", 0); // Stub for MVP
         };
+    }
+
+    private ExecResult executeStatements(List<StatementNode> statements, String stdin) {
+        String stdout = "";
+        String stderr = "";
+        int exitCode = 0;
+        for (StatementNode stmt : statements) {
+            var result = executeStatement(stmt);
+            stdout += result.stdout();
+            stderr += result.stderr();
+            exitCode = result.exitCode();
+        }
+        return new ExecResult(stdout, stderr, exitCode);
+    }
+
+    private ExecResult executeIfCommand(IfNode ifNode, String stdin) {
+        for (IfNode.IfClause clause : ifNode.clauses()) {
+            int conditionExit = executeStatements(clause.condition(), stdin).exitCode();
+            if (conditionExit == 0) {
+                return executeStatements(clause.body(), stdin);
+            }
+        }
+        if (!ifNode.elseBody().isEmpty()) {
+            return executeStatements(ifNode.elseBody(), stdin);
+        }
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult executeForCommand(ForNode forNode, String stdin) {
+        state.loopDepth++;
+        try {
+            List<String> values;
+            if (forNode.words().isPresent()) {
+                values = new ArrayList<>();
+                for (WordNode word : forNode.words().get()) {
+                    values.addAll(expansion.expandWord(word, state));
+                }
+            } else {
+                // Default: iterate over $@ (positional parameters)
+                String at = state.env.getOrDefault("@", "");
+                values = at.isEmpty() ? List.of() : List.of(at.split(" "));
+            }
+
+            String stdout = "";
+            String stderr = "";
+            int exitCode = 0;
+
+            for (String value : values) {
+                state.env.put(forNode.variable(), value);
+                try {
+                    for (StatementNode stmt : forNode.body()) {
+                        var result = executeStatement(stmt);
+                        stdout += result.stdout();
+                        stderr += result.stderr();
+                        exitCode = result.exitCode();
+                    }
+                } catch (BreakException e) {
+                    stdout += e.stdout();
+                    stderr += e.stderr();
+                    if (e.levels() > 1) {
+                        var be = new BreakException(e.levels() - 1);
+                        be.setStdout(stdout);
+                        be.setStderr(stderr);
+                        throw be;
+                    }
+                    break;
+                } catch (ContinueException e) {
+                    stdout += e.stdout();
+                    stderr += e.stderr();
+                    if (e.levels() > 1) {
+                        var ce = new ContinueException(e.levels() - 1);
+                        ce.setStdout(stdout);
+                        ce.setStderr(stderr);
+                        throw ce;
+                    }
+                    continue;
+                }
+            }
+
+            return new ExecResult(stdout, stderr, exitCode);
+        } finally {
+            state.loopDepth--;
+        }
+    }
+
+    private ExecResult executeWhileCommand(WhileNode whileNode, String stdin) {
+        state.loopDepth++;
+        try {
+            String stdout = "";
+            String stderr = "";
+            int exitCode = 0;
+
+            while (true) {
+                int condExit = executeStatements(whileNode.condition(), stdin).exitCode();
+                boolean shouldRun = whileNode.isUntil() ? (condExit != 0) : (condExit == 0);
+                if (!shouldRun) break;
+
+                try {
+                    for (StatementNode stmt : whileNode.body()) {
+                        var result = executeStatement(stmt);
+                        stdout += result.stdout();
+                        stderr += result.stderr();
+                        exitCode = result.exitCode();
+                    }
+                } catch (BreakException e) {
+                    stdout += e.stdout();
+                    stderr += e.stderr();
+                    if (e.levels() > 1) {
+                        var be = new BreakException(e.levels() - 1);
+                        be.setStdout(stdout);
+                        be.setStderr(stderr);
+                        throw be;
+                    }
+                    break;
+                } catch (ContinueException e) {
+                    stdout += e.stdout();
+                    stderr += e.stderr();
+                    if (e.levels() > 1) {
+                        var ce = new ContinueException(e.levels() - 1);
+                        ce.setStdout(stdout);
+                        ce.setStderr(stderr);
+                        throw ce;
+                    }
+                    continue;
+                }
+            }
+
+            return new ExecResult(stdout, stderr, exitCode);
+        } finally {
+            state.loopDepth--;
+        }
+    }
+
+    private ExecResult executeGroupCommand(GroupNode group, String stdin) {
+        return executeStatements(group.body(), stdin);
+    }
+
+    private ExecResult executeSubshellCommand(SubshellNode subshell, String stdin) {
+        // For MVP, execute in same state (full subshell isolation is future work)
+        return executeStatements(subshell.body(), stdin);
     }
 
     private ExecResult executeSimpleCommand(SimpleCommandNode cmd, String stdin) {

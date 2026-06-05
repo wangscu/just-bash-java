@@ -9,9 +9,10 @@ public record WhileNode(
     int line,
     List<StatementNode> condition,
     List<StatementNode> body,
+    boolean isUntil,
     List<RedirectionNode> redirections
 ) implements CompoundCommandNode {
 
     @Override
-    public String type() { return "While"; }
+    public String type() { return isUntil ? "Until" : "While"; }
 }

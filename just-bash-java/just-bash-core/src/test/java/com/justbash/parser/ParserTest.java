@@ -3,7 +3,7 @@ package com.justbash.parser;
 import com.justbash.ast.ScriptNode;
 import com.justbash.ast.StatementNode;
 import com.justbash.ast.PipelineNode;
-import com.justbash.ast.command.SimpleCommandNode;
+import com.justbash.ast.command.*;
 import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -35,5 +35,66 @@ class ParserTest {
             ast.statements().get(0).pipelines().get(0).commands().get(0);
         assertThat(cmd.assignments()).hasSize(1);
         assertThat(cmd.assignments().get(0).name()).isEqualTo("FOO");
+    }
+
+    @Test
+    void parseIfStatement() {
+        ScriptNode ast = Parser.parse("if true; then echo yes; fi");
+        assertThat(ast.statements()).hasSize(1);
+        IfNode ifNode = (IfNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(ifNode.clauses()).hasSize(1);
+        assertThat(ifNode.elseBody()).isEmpty();
+    }
+
+    @Test
+    void parseIfElse() {
+        ScriptNode ast = Parser.parse("if false; then echo no; else echo yes; fi");
+        IfNode ifNode = (IfNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(ifNode.clauses()).hasSize(1);
+        assertThat(ifNode.elseBody()).hasSize(1);
+    }
+
+    @Test
+    void parseIfElif() {
+        ScriptNode ast = Parser.parse("if false; then echo a; elif true; then echo b; fi");
+        IfNode ifNode = (IfNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(ifNode.clauses()).hasSize(2);
+        assertThat(ifNode.elseBody()).isEmpty();
+    }
+
+    @Test
+    void parseForLoop() {
+        ScriptNode ast = Parser.parse("for i in a b c; do echo $i; done");
+        ForNode forNode = (ForNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(forNode.variable()).isEqualTo("i");
+        assertThat(forNode.words()).isPresent();
+        assertThat(forNode.words().get()).hasSize(3);
+        assertThat(forNode.body()).hasSize(1);
+    }
+
+    @Test
+    void parseWhileLoop() {
+        ScriptNode ast = Parser.parse("while false; do echo loop; done");
+        WhileNode whileNode = (WhileNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(whileNode.isUntil()).isFalse();
+        assertThat(whileNode.condition()).hasSize(1);
+        assertThat(whileNode.body()).hasSize(1);
+    }
+
+    @Test
+    void parseUntilLoop() {
+        ScriptNode ast = Parser.parse("until true; do echo loop; done");
+        WhileNode whileNode = (WhileNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(whileNode.isUntil()).isTrue();
+        assertThat(whileNode.condition()).hasSize(1);
+        assertThat(whileNode.body()).hasSize(1);
+    }
+
+    @Test
+    void parseGroupCommand() {
+        ScriptNode ast = Parser.parse("{ echo a; echo b; }");
+        GroupNode group = (GroupNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(group.body()).hasSize(1);
+        assertThat(group.body().get(0).pipelines()).hasSize(2);
     }
 }

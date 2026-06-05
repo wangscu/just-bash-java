@@ -4,6 +4,8 @@ import com.justbash.ExecResult;
 import com.justbash.ast.ScriptNode;
 import com.justbash.fs.FsStat;
 import com.justbash.fs.IFileSystem;
+import com.justbash.interpreter.errors.BreakException;
+import com.justbash.interpreter.errors.ContinueException;
 import com.justbash.interpreter.errors.ExitException;
 import com.justbash.interpreter.errors.ParseException;
 import com.justbash.parser.Parser;
@@ -39,6 +41,8 @@ public class BuiltinDispatcher {
             case "local" -> Optional.of(handleLocal(args, state));
             case "declare", "typeset" -> Optional.of(handleDeclare(args, state));
             case "read" -> Optional.of(handleRead(args, state));
+            case "break" -> Optional.of(handleBreak(args, state));
+            case "continue" -> Optional.of(handleContinue(args, state));
             default -> Optional.empty();
         };
     }
@@ -482,5 +486,37 @@ public class BuiltinDispatcher {
         }
 
         return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handleBreak(List<String> args, InterpreterState state) {
+        if (state.loopDepth == 0) {
+            return new ExecResult("", "bash: break: only meaningful in a loop\n", 1);
+        }
+        int levels = 1;
+        if (!args.isEmpty()) {
+            try {
+                levels = Integer.parseInt(args.get(0));
+            } catch (NumberFormatException e) {
+                return new ExecResult("", "bash: break: " + args.get(0) + ": numeric argument required\n", 1);
+            }
+        }
+        if (levels < 1) levels = 1;
+        throw new BreakException(levels);
+    }
+
+    private ExecResult handleContinue(List<String> args, InterpreterState state) {
+        if (state.loopDepth == 0) {
+            return new ExecResult("", "bash: continue: only meaningful in a loop\n", 1);
+        }
+        int levels = 1;
+        if (!args.isEmpty()) {
+            try {
+                levels = Integer.parseInt(args.get(0));
+            } catch (NumberFormatException e) {
+                return new ExecResult("", "bash: continue: " + args.get(0) + ": numeric argument required\n", 1);
+            }
+        }
+        if (levels < 1) levels = 1;
+        throw new ContinueException(levels);
     }
 }

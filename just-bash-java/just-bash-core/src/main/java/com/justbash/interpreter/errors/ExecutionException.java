@@ -15,4 +15,6 @@ public sealed class ExecutionException extends BashException
     private String stderr = "";
     public String stdout() { return stdout; }
     public String stderr() { return stderr; }
+    public void setStdout(String s) { this.stdout = s; }
+    public void setStderr(String s) { this.stderr = s; }
 }
