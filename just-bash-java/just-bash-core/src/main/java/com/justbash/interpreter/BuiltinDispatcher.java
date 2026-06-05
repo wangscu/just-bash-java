@@ -8,6 +8,7 @@ import com.justbash.interpreter.errors.BreakException;
 import com.justbash.interpreter.errors.ContinueException;
 import com.justbash.interpreter.errors.ExitException;
 import com.justbash.interpreter.errors.ParseException;
+import com.justbash.interpreter.errors.ReturnException;
 import com.justbash.parser.Parser;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -43,6 +44,7 @@ public class BuiltinDispatcher {
             case "read" -> Optional.of(handleRead(args, state));
             case "break" -> Optional.of(handleBreak(args, state));
             case "continue" -> Optional.of(handleContinue(args, state));
+            case "return" -> Optional.of(handleReturn(args, state));
             default -> Optional.empty();
         };
     }
@@ -518,5 +520,20 @@ public class BuiltinDispatcher {
         }
         if (levels < 1) levels = 1;
         throw new ContinueException(levels);
+    }
+
+    private ExecResult handleReturn(List<String> args, InterpreterState state) {
+        if (state.callDepth == 0) {
+            return new ExecResult("", "bash: return: can only `return' from a function or sourced script\n", 1);
+        }
+        int exitCode = state.lastExitCode;
+        if (!args.isEmpty()) {
+            try {
+                exitCode = Integer.parseInt(args.get(0));
+            } catch (NumberFormatException e) {
+                return new ExecResult("", "bash: return: " + args.get(0) + ": numeric argument required\n", 2);
+            }
+        }
+        throw new ReturnException(exitCode);
     }
 }

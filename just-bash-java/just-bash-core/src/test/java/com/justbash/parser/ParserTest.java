@@ -116,4 +116,20 @@ class ParserTest {
         assertThat(caseNode.items().get(0).patterns()).hasSize(2);
         assertThat(caseNode.items().get(1).patterns()).hasSize(1);
     }
+
+    @Test
+    void parseFunctionDefWithKeyword() {
+        ScriptNode ast = Parser.parse("function foo() { echo hi; }");
+        FunctionDefNode func = (FunctionDefNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(func.name()).isEqualTo("foo");
+        assertThat(func.body()).isInstanceOf(GroupNode.class);
+    }
+
+    @Test
+    void parseFunctionDefWithoutKeyword() {
+        ScriptNode ast = Parser.parse("bar() { echo hello; }");
+        FunctionDefNode func = (FunctionDefNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(func.name()).isEqualTo("bar");
+        assertThat(func.body()).isInstanceOf(GroupNode.class);
+    }
 }

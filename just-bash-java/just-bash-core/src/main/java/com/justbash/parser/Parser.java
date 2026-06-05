@@ -70,6 +70,7 @@ public class Parser {
         if (check(TokenType.WHILE)) return parseWhile();
         if (check(TokenType.UNTIL)) return parseUntil();
         if (check(TokenType.CASE)) return parseCase();
+        if (check(TokenType.FUNCTION) || isFunctionDefinition()) return parseFunction();
         if (check(TokenType.LPAREN)) return parseSubshell();
         if (check(TokenType.LBRACE)) return parseGroup();
         return parseSimpleCommand();
@@ -217,6 +218,33 @@ public class Parser {
         return new CaseNode(line, word, items, List.of());
     }
 
+    private boolean isFunctionDefinition() {
+        if (!check(TokenType.WORD)) return false;
+        if (pos + 1 >= tokens.size() || tokens.get(pos + 1).type() != TokenType.LPAREN) return false;
+        if (pos + 2 >= tokens.size() || tokens.get(pos + 2).type() != TokenType.RPAREN) return false;
+        return true;
+    }
+
+    private FunctionDefNode parseFunction() {
+        int line = current().line();
+        String name;
+        if (match(TokenType.FUNCTION)) {
+            name = expect(TokenType.WORD).value();
+        } else {
+            name = expect(TokenType.WORD).value();
+        }
+        if (match(TokenType.LPAREN)) {
+            expect(TokenType.RPAREN);
+        }
+        skipNewlines();
+        CommandNode body = parseCommand();
+        if (!(body instanceof CompoundCommandNode)) {
+            throw new ParseException("Function body must be a compound command",
+                current().line(), current().column());
+        }
+        return new FunctionDefNode(line, name, (CompoundCommandNode) body, List.of(), Optional.empty());
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // Compound list parser (used for bodies of compound commands)
     // ─────────────────────────────────────────────────────────────────────────
@@ -321,17 +349,22 @@ public class Parser {
                         i = closeBrace + 1;
                     }
                 } else {
-                    while (paramEnd < value.length()
-                           && (Character.isLetterOrDigit(value.charAt(paramEnd))
-                               || value.charAt(paramEnd) == '_')) {
-                        paramEnd++;
-                    }
-                    if (paramEnd > paramStart) {
-                        parts.add(new ParameterExpansionPart(line, value.substring(paramStart, paramEnd), Optional.empty()));
-                        i = paramEnd;
+                    if (paramEnd < value.length() && "@*#?-$!".indexOf(value.charAt(paramEnd)) >= 0) {
+                        parts.add(new ParameterExpansionPart(line, value.substring(paramStart, paramStart + 1), Optional.empty()));
+                        i = paramStart + 1;
                     } else {
-                        parts.add(new LiteralPart(line, "$"));
-                        i = paramStart;
+                        while (paramEnd < value.length()
+                               && (Character.isLetterOrDigit(value.charAt(paramEnd))
+                                   || value.charAt(paramEnd) == '_')) {
+                            paramEnd++;
+                        }
+                        if (paramEnd > paramStart) {
+                            parts.add(new ParameterExpansionPart(line, value.substring(paramStart, paramEnd), Optional.empty()));
+                            i = paramEnd;
+                        } else {
+                            parts.add(new LiteralPart(line, "$"));
+                            i = paramStart;
+                        }
                     }
                 }
             } else {
@@ -384,8 +417,8 @@ public class Parser {
 
     private boolean canStartCommand() {
         return check(TokenType.WORD, TokenType.IF, TokenType.FOR, TokenType.WHILE,
-                     TokenType.UNTIL, TokenType.CASE, TokenType.LPAREN, TokenType.LBRACE,
-                     TokenType.BANG);
+                     TokenType.UNTIL, TokenType.CASE, TokenType.FUNCTION, TokenType.LPAREN,
+                     TokenType.LBRACE, TokenType.BANG);
     }
 
     private boolean canStartStatement() {

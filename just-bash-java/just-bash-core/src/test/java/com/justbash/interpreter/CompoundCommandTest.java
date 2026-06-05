@@ -257,4 +257,92 @@ class CompoundCommandTest {
         assertThat(result.exitCode()).isEqualTo(0);
         bash.shutdown();
     }
+
+    @Test
+    void functionDefAndCall() {
+        Bash bash = new Bash();
+        var result = bash.exec("function greet() { echo hello; }; greet").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionDefWithoutKeyword() {
+        Bash bash = new Bash();
+        var result = bash.exec("foo() { echo bar; }; foo").join();
+        assertThat(result.stdout()).isEqualTo("bar\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionWithArgs() {
+        Bash bash = new Bash();
+        var result = bash.exec("f() { echo $1 $2; }; f hello world").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionReturn() {
+        Bash bash = new Bash();
+        var result = bash.exec("f() { return 42; }; f").join();
+        assertThat(result.stdout()).isEmpty();
+        assertThat(result.exitCode()).isEqualTo(42);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionReturnWithOutput() {
+        Bash bash = new Bash();
+        var result = bash.exec("f() { echo hi; return 1; }; f").join();
+        assertThat(result.stdout()).isEqualTo("hi\n");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionLocalVariable() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=global; f() { local x=local; echo $x; }; f; echo $x").join();
+        assertThat(result.stdout()).isEqualTo("local\nglobal\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionPositionalParamsRestored() {
+        Bash bash = new Bash();
+        var result = bash.exec("f() { echo $1; }; f x; echo $1").join();
+        assertThat(result.stdout()).isEqualTo("x\n\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void functionReturnsLastExitCodeByDefault() {
+        Bash bash = new Bash();
+        var result = bash.exec("f() { false; return; }; f").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void returnOutsideFunctionError() {
+        Bash bash = new Bash();
+        var result = bash.exec("return").join();
+        assertThat(result.stderr()).contains("can only `return' from a function");
+        bash.shutdown();
+    }
+
+    @Test
+    void functionCallsBuiltin() {
+        Bash bash = new Bash();
+        var result = bash.exec("f() { echo $1; }; f test").join();
+        assertThat(result.stdout()).isEqualTo("test\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
 }

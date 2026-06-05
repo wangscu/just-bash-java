@@ -95,6 +95,10 @@ public class Interpreter {
                 e.setStdout(e.stdout() + stdout);
                 e.setStderr(e.stderr() + stderr);
                 throw e;
+            } catch (ReturnException e) {
+                e.setStdout(stdout + e.stdout());
+                e.setStderr(stderr + e.stderr());
+                throw e;
             }
             state.lastExitCode = exitCode;
             state.env.put("?", String.valueOf(exitCode));
@@ -113,6 +117,7 @@ public class Interpreter {
             case CaseNode caseNode -> executeCaseCommand(caseNode, stdin);
             case GroupNode group -> executeGroupCommand(group, stdin);
             case SubshellNode subshell -> executeSubshellCommand(subshell, stdin);
+            case FunctionDefNode func -> executeFunctionDef(func);
             default -> new ExecResult("", "", 0); // Stub for MVP
         };
     }
@@ -121,11 +126,17 @@ public class Interpreter {
         String stdout = "";
         String stderr = "";
         int exitCode = 0;
-        for (StatementNode stmt : statements) {
-            var result = executeStatement(stmt);
-            stdout += result.stdout();
-            stderr += result.stderr();
-            exitCode = result.exitCode();
+        try {
+            for (StatementNode stmt : statements) {
+                var result = executeStatement(stmt);
+                stdout += result.stdout();
+                stderr += result.stderr();
+                exitCode = result.exitCode();
+            }
+        } catch (ReturnException e) {
+            e.setStdout(stdout + e.stdout());
+            e.setStderr(stderr + e.stderr());
+            throw e;
         }
         return new ExecResult(stdout, stderr, exitCode);
     }
@@ -338,7 +349,13 @@ public class Interpreter {
             args.addAll(expansion.expandWord(argWord, state));
         }
 
-        // Try builtin first
+        // Try user-defined functions first
+        FunctionDefNode func = state.functions.get(commandName);
+        if (func != null) {
+            return callFunction(func, args);
+        }
+
+        // Try builtin
         var builtinResult = builtins.dispatch(commandName, args, state);
         if (builtinResult.isPresent()) {
             return builtinResult.get();
@@ -373,5 +390,59 @@ public class Interpreter {
             }
         }
         return result;
+    }
+
+    private ExecResult executeFunctionDef(FunctionDefNode funcNode) {
+        state.functions.put(funcNode.name(), funcNode);
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult callFunction(FunctionDefNode func, List<String> args) {
+        state.callDepth++;
+        state.pushLocalScope();
+
+        Map<String, String> saved = new LinkedHashMap<>();
+        for (int i = 0; i < args.size(); i++) {
+            String key = String.valueOf(i + 1);
+            saved.put(key, state.env.get(key));
+            state.env.put(key, args.get(i));
+        }
+        saved.put("@", state.env.get("@"));
+        saved.put("#", state.env.get("#"));
+        state.env.put("@", String.join(" ", args));
+        state.env.put("#", String.valueOf(args.size()));
+
+        state.funcNameStack.add(0, func.name());
+
+        try {
+            try {
+                return executeCommand(func.body(), "");
+            } catch (ReturnException e) {
+                return new ExecResult(e.stdout(), e.stderr(), e.exitCode());
+            }
+        } finally {
+            for (Map.Entry<String, String> entry : saved.entrySet()) {
+                if (entry.getValue() == null) {
+                    state.env.remove(entry.getKey());
+                } else {
+                    state.env.put(entry.getKey(), entry.getValue());
+                }
+            }
+            if (!state.localScopes.isEmpty()) {
+                Map<String, String> localScope = state.localScopes.get(state.localScopes.size() - 1);
+                for (Map.Entry<String, String> entry : localScope.entrySet()) {
+                    if ("__UNSET__".equals(entry.getValue())) {
+                        state.env.remove(entry.getKey());
+                    } else {
+                        state.env.put(entry.getKey(), entry.getValue());
+                    }
+                }
+            }
+            if (!state.funcNameStack.isEmpty()) {
+                state.funcNameStack.remove(0);
+            }
+            state.popLocalScope();
+            state.callDepth--;
+        }
     }
 }
