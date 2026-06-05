@@ -15,7 +15,7 @@ public class Interpreter {
     private final InterpreterOptions options;
     private InterpreterState state;
     private final ExpansionEngine expansion = new ExpansionEngine();
-    private final BuiltinDispatcher builtins = new BuiltinDispatcher();
+    private final BuiltinDispatcher builtins;
     private final CommandResolver resolver = new CommandResolver();
     private final PipelineExecutor pipelineExecutor;
 
@@ -23,6 +23,7 @@ public class Interpreter {
         this.options = options;
         this.state = state;
         this.pipelineExecutor = new PipelineExecutor(this);
+        this.builtins = new BuiltinDispatcher(options.fs());
     }
 
     public InterpreterState getState() { return state; }

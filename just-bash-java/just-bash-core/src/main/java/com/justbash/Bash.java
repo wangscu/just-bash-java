@@ -19,8 +19,8 @@ public class Bash {
     private final ExecutorService virtualThreadExecutor;
     private final Optional<BashLogger> logger;
 
-    private String cwd = "/home/user";
-    private Map<String, String> env = new LinkedHashMap<>();
+    // Persistent interpreter state across exec() calls
+    private InterpreterState state;
 
     public Bash() { this(BashOptions.defaults()); }
 
@@ -30,15 +30,26 @@ public class Bash {
         this.virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.logger = options.logger();
 
-        // Initialize default env
-        env.put("HOME", "/home/user");
-        env.put("PATH", "/usr/bin:/bin");
-        env.put("IFS", " \t\n");
-        env.put("PWD", cwd);
-        env.put("OLDPWD", cwd);
+        // Initialize persistent state
+        this.state = InterpreterState.defaults();
+        this.state.getEnv().put("HOME", "/home/user");
+        this.state.getEnv().put("PATH", "/usr/bin:/bin");
+        this.state.getEnv().put("IFS", " \t\n");
+        this.state.getEnv().put("PWD", "/home/user");
+        this.state.getEnv().put("OLDPWD", "/home/user");
+        this.state.getExportedVars().add("HOME");
+        this.state.getExportedVars().add("PATH");
+        this.state.getExportedVars().add("IFS");
+        this.state.getExportedVars().add("PWD");
+        this.state.getExportedVars().add("OLDPWD");
+        this.state.setCwd("/home/user");
+        this.state.setPreviousDir("/home/user");
 
         if (options.env().isPresent()) {
-            env.putAll(options.env().get());
+            for (Map.Entry<String, String> entry : options.env().get().entrySet()) {
+                this.state.getEnv().put(entry.getKey(), entry.getValue());
+                this.state.getExportedVars().add(entry.getKey());
+            }
         }
     }
 
@@ -61,11 +72,6 @@ public class Bash {
         try {
             var ast = Parser.parse(commandLine);
             if (ast instanceof ScriptNode script) {
-                InterpreterState state = InterpreterState.defaults();
-                // Copy current env into state
-                state.getEnv().putAll(this.env);
-                state.setCwd(this.cwd);
-
                 InterpreterOptions interpOptions = new InterpreterOptions(
                     this.fs,
                     this.commands,
@@ -73,25 +79,23 @@ public class Bash {
                     (scriptStr, execOpts) -> exec(scriptStr, execOpts)
                 );
 
-                Interpreter interpreter = new Interpreter(interpOptions, state);
+                Interpreter interpreter = new Interpreter(interpOptions, this.state);
                 BashExecResult result = interpreter.executeScript(script);
-                // Update env from interpreter state
-                this.env = new LinkedHashMap<>(state.getEnv());
                 return result;
             }
-            return new BashExecResult("", "", 0, Map.copyOf(env));
+            return new BashExecResult("", "", 0, Map.copyOf(state.getEnv()));
         } catch (ParseException e) {
             return new BashExecResult("",
-                "bash: syntax error: " + e.getMessage() + "\n", 2, Map.copyOf(env));
+                "bash: syntax error: " + e.getMessage() + "\n", 2, Map.copyOf(state.getEnv()));
         }
     }
 
     public CompletableFuture<String> readFile(String path) {
-        return fs.readFile(fs.resolvePath(cwd, path));
+        return fs.readFile(fs.resolvePath(state.getCwd(), path));
     }
 
-    public String getCwd() { return cwd; }
-    public Map<String, String> getEnv() { return Map.copyOf(env); }
+    public String getCwd() { return state.getCwd(); }
+    public Map<String, String> getEnv() { return Map.copyOf(state.getEnv()); }
 
     public void registerCommand(Command command) {
         commands.put(command.name(), command);

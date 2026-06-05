@@ -25,6 +25,7 @@ public interface IFileSystem {
 
     CompletableFuture<Boolean> exists(String path);
     CompletableFuture<FsStat> stat(String path);
+    default FsStat statSync(String path) { return stat(path).join(); }
 
     CompletableFuture<Void> mkdir(String path, MkdirOptions options);
     default CompletableFuture<Void> mkdir(String path) {

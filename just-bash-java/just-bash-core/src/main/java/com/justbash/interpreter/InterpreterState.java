@@ -311,4 +311,20 @@ public class InterpreterState {
     public void setLastExitCode(int lastExitCode) {
         this.lastExitCode = lastExitCode;
     }
+
+    public Set<String> getExportedVars() {
+        return exportedVars;
+    }
+
+    public void setExportedVars(Set<String> exportedVars) {
+        this.exportedVars = exportedVars;
+    }
+
+    public String getPreviousDir() {
+        return previousDir;
+    }
+
+    public void setPreviousDir(String previousDir) {
+        this.previousDir = previousDir;
+    }
 }
