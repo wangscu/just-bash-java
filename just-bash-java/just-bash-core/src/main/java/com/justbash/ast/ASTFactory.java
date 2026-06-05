@@ -66,7 +66,7 @@ public final class ASTFactory {
 
     public static AssignmentNode assignment(
             String name, WordNode value, boolean append) {
-        return new AssignmentNode(0, name, Optional.ofNullable(value), append, Optional.empty());
+        return new AssignmentNode(0, name, Optional.ofNullable(value), append, Optional.empty(), Optional.empty());
     }
 
     public static RedirectionNode redirection(

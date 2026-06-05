@@ -115,6 +115,55 @@ public class Lexer {
         StringBuilder sb = new StringBuilder();
         while (!isAtEnd()) {
             char ch = peek();
+            if (ch == '$') {
+                // Check for $(( arithmetic expansion
+                if (!isAtEnd(1) && peek(1) == '(' && !isAtEnd(2) && peek(2) == '(') {
+                    sb.append(advance()); // $
+                    sb.append(advance()); // (
+                    sb.append(advance()); // (
+                    int depth = 2;
+                    while (!isAtEnd() && depth > 0) {
+                        char c = advance();
+                        sb.append(c);
+                        if (c == '(') depth++;
+                        else if (c == ')') depth--;
+                    }
+                    continue;
+                }
+                // Check for $( command substitution
+                if (!isAtEnd(1) && peek(1) == '(') {
+                    sb.append(advance()); // $
+                    sb.append(advance()); // (
+                    int depth = 1;
+                    boolean inSingleQuote = false;
+                    boolean inDoubleQuote = false;
+                    while (!isAtEnd() && depth > 0) {
+                        char c = advance();
+                        sb.append(c);
+                        if (!inSingleQuote && c == '"' && !inDoubleQuote) {
+                            inDoubleQuote = !inDoubleQuote;
+                        } else if (!inDoubleQuote && c == '\'') {
+                            inSingleQuote = !inSingleQuote;
+                        } else if (!inSingleQuote && !inDoubleQuote) {
+                            if (c == '(') depth++;
+                            else if (c == ')') depth--;
+                        }
+                    }
+                    continue;
+                }
+                // Check for ${ parameter expansion
+                if (!isAtEnd(1) && peek(1) == '{') {
+                    sb.append(advance()); // $
+                    sb.append(advance()); // {
+                    while (!isAtEnd() && peek() != '}') {
+                        sb.append(advance());
+                    }
+                    if (!isAtEnd() && peek() == '}') {
+                        sb.append(advance()); // }
+                    }
+                    continue;
+                }
+            }
             if (isWordDelimiter(ch)) {
                 break;
             }
@@ -147,7 +196,7 @@ public class Lexer {
     }
 
     private boolean isWordDelimiter(char c) {
-        return Character.isWhitespace(c) || ";|&<>()!{}\n#".indexOf(c) >= 0;
+        return Character.isWhitespace(c) || ";|&<>()!{}\n".indexOf(c) >= 0;
     }
 
     private void skipWhitespace() {
@@ -164,6 +213,10 @@ public class Lexer {
 
     private char peek() {
         return isAtEnd() ? '\0' : input.charAt(pos);
+    }
+
+    private char peek(int offset) {
+        return isAtEnd(offset) ? '\0' : input.charAt(pos + offset);
     }
 
     private char advance() {

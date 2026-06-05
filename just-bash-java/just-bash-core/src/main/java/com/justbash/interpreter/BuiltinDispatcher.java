@@ -30,7 +30,7 @@ public class BuiltinDispatcher {
     public Optional<ExecResult> dispatch(String name, List<String> args, InterpreterState state) {
         return switch (name) {
             case "echo" -> Optional.of(handleEcho(args));
-            case "true" -> Optional.of(new ExecResult("", "", 0));
+            case "true", ":" -> Optional.of(new ExecResult("", "", 0));
             case "false" -> Optional.of(new ExecResult("", "", 1));
             case "cd" -> Optional.of(handleCd(args, state));
             case "pwd" -> Optional.of(handlePwd(args, state));
@@ -45,6 +45,11 @@ public class BuiltinDispatcher {
             case "break" -> Optional.of(handleBreak(args, state));
             case "continue" -> Optional.of(handleContinue(args, state));
             case "return" -> Optional.of(handleReturn(args, state));
+            case "shift" -> Optional.of(handleShift(args, state));
+            case "test" -> Optional.of(handleTest(args, state, false));
+            case "[" -> Optional.of(handleTest(args, state, true));
+            case "set" -> Optional.of(handleSet(args, state));
+            case "shopt" -> Optional.of(handleShopt(args, state));
             default -> Optional.empty();
         };
     }
@@ -535,5 +540,247 @@ public class BuiltinDispatcher {
             }
         }
         throw new ReturnException(exitCode);
+    }
+
+    private ExecResult handleTest(List<String> args, InterpreterState state, boolean bracketMode) {
+        int exitCode = TestCommandEvaluator.evaluate(args, fs, state, bracketMode);
+        if (exitCode == 2) {
+            String msg = bracketMode
+                ? "bash: [: missing `]'\n"
+                : "bash: test: missing argument\n";
+            return new ExecResult("", msg, 2);
+        }
+        return new ExecResult("", "", exitCode);
+    }
+
+    private ExecResult handleSet(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            StringBuilder stdout = new StringBuilder();
+            List<String> sorted = new ArrayList<>(state.env.keySet());
+            Collections.sort(sorted);
+            for (String name : sorted) {
+                if (name.equals("?")) continue;
+                String value = state.env.get(name);
+                if (value != null) {
+                    stdout.append(name).append("=").append(value).append("\n");
+                }
+            }
+            return new ExecResult(stdout.toString(), "", 0);
+        }
+
+        int i = 0;
+        boolean setPositional = false;
+        List<String> positionalArgs = new ArrayList<>();
+
+        while (i < args.size()) {
+            String arg = args.get(i);
+
+            if (arg.equals("--")) {
+                setPositional = true;
+                positionalArgs = new ArrayList<>(args.subList(i + 1, args.size()));
+                break;
+            }
+
+            if (arg.equals("-")) {
+                setPositional = true;
+                positionalArgs = new ArrayList<>(args.subList(i + 1, args.size()));
+                break;
+            }
+
+            if (arg.startsWith("-") && arg.length() > 1) {
+                if (arg.equals("-o")) {
+                    i++;
+                    if (i >= args.size()) {
+                        return new ExecResult("", "bash: set: -o: option requires an argument\n", 2);
+                    }
+                    String optName = args.get(i);
+                    setOptionByName(optName, true, state);
+                } else {
+                    for (char c : arg.substring(1).toCharArray()) {
+                        setOptionByChar(c, true, state);
+                    }
+                }
+            } else if (arg.startsWith("+") && arg.length() > 1) {
+                if (arg.equals("+o")) {
+                    i++;
+                    if (i >= args.size()) {
+                        return new ExecResult("", "bash: set: +o: option requires an argument\n", 2);
+                    }
+                    String optName = args.get(i);
+                    setOptionByName(optName, false, state);
+                } else {
+                    for (char c : arg.substring(1).toCharArray()) {
+                        setOptionByChar(c, false, state);
+                    }
+                }
+            } else {
+                setPositional = true;
+                positionalArgs = new ArrayList<>(args.subList(i, args.size()));
+                break;
+            }
+            i++;
+        }
+
+        if (setPositional) {
+            int oldCount;
+            try {
+                oldCount = Integer.parseInt(state.env.getOrDefault("#", "0"));
+            } catch (NumberFormatException e) {
+                oldCount = 0;
+            }
+            for (int j = 1; j <= oldCount; j++) {
+                state.env.remove(String.valueOf(j));
+            }
+            for (int j = 0; j < positionalArgs.size(); j++) {
+                state.env.put(String.valueOf(j + 1), positionalArgs.get(j));
+            }
+            state.env.put("#", String.valueOf(positionalArgs.size()));
+            state.env.put("@", String.join(" ", positionalArgs));
+        }
+
+        updateShelOpts(state);
+        return new ExecResult("", "", 0);
+    }
+
+    private void setOptionByChar(char c, boolean enable, InterpreterState state) {
+        switch (c) {
+            case 'e' -> state.options.errexit = enable;
+            case 'u' -> state.options.nounset = enable;
+            case 'x' -> state.options.xtrace = enable;
+            case 'v' -> state.options.verbose = enable;
+            case 'f' -> state.options.noglob = enable;
+            case 'C' -> state.options.noclobber = enable;
+            case 'a' -> state.options.allexport = enable;
+            case 'n' -> state.options.noexec = enable;
+        }
+    }
+
+    private void setOptionByName(String name, boolean enable, InterpreterState state) {
+        switch (name) {
+            case "errexit" -> state.options.errexit = enable;
+            case "nounset" -> state.options.nounset = enable;
+            case "xtrace" -> state.options.xtrace = enable;
+            case "verbose" -> state.options.verbose = enable;
+            case "noglob" -> state.options.noglob = enable;
+            case "noclobber" -> state.options.noclobber = enable;
+            case "allexport" -> state.options.allexport = enable;
+            case "noexec" -> state.options.noexec = enable;
+            case "pipefail" -> state.options.pipefail = enable;
+            case "posix" -> state.options.posix = enable;
+        }
+    }
+
+    private void updateShelOpts(InterpreterState state) {
+        StringBuilder sb = new StringBuilder();
+        ShellOptions opts = state.options;
+        if (opts.allexport) sb.append(":allexport");
+        if (opts.errexit) sb.append(":errexit");
+        if (opts.noclobber) sb.append(":noclobber");
+        if (opts.noexec) sb.append(":noexec");
+        if (opts.noglob) sb.append(":noglob");
+        if (opts.nounset) sb.append(":nounset");
+        if (opts.pipefail) sb.append(":pipefail");
+        if (opts.posix) sb.append(":posix");
+        if (opts.verbose) sb.append(":verbose");
+        if (opts.xtrace) sb.append(":xtrace");
+        String value = sb.isEmpty() ? "" : sb.substring(1);
+        state.env.put("SHELLOPTS", value);
+    }
+
+    private ExecResult handleShift(List<String> args, InterpreterState state) {
+        int shiftCount = 1;
+        if (!args.isEmpty()) {
+            try {
+                shiftCount = Integer.parseInt(args.get(0));
+            } catch (NumberFormatException e) {
+                return new ExecResult("", "bash: shift: " + args.get(0) + ": numeric argument required\n", 2);
+            }
+        }
+
+        if (shiftCount < 0) {
+            return new ExecResult("", "bash: shift: " + args.get(0) + ": shift count out of range\n", 2);
+        }
+
+        int paramCount;
+        try {
+            paramCount = Integer.parseInt(state.env.getOrDefault("#", "0"));
+        } catch (NumberFormatException e) {
+            paramCount = 0;
+        }
+
+        if (shiftCount > paramCount) {
+            return new ExecResult("", "bash: shift: shift count out of range\n", 1);
+        }
+
+        // Shift positional params: remove 1..shiftCount, move shiftCount+1..N to 1..N-shiftCount
+        List<String> newParams = new ArrayList<>();
+        for (int i = shiftCount + 1; i <= paramCount; i++) {
+            String key = String.valueOf(i);
+            String value = state.env.get(key);
+            newParams.add(value != null ? value : "");
+            state.env.remove(key);
+        }
+
+        // Clean up old keys that are now beyond the new count
+        for (int i = 1; i <= paramCount; i++) {
+            state.env.remove(String.valueOf(i));
+        }
+
+        // Set new positional params
+        for (int i = 0; i < newParams.size(); i++) {
+            state.env.put(String.valueOf(i + 1), newParams.get(i));
+        }
+
+        int newCount = newParams.size();
+        state.env.put("#", String.valueOf(newCount));
+        state.env.put("@", String.join(" ", newParams));
+
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handleShopt(List<String> args, InterpreterState state) {
+        boolean setFlag = false;
+        boolean unsetFlag = false;
+        boolean queryFlag = false;
+        List<String> opts = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-s")) {
+                setFlag = true;
+            } else if (arg.equals("-u")) {
+                unsetFlag = true;
+            } else if (arg.equals("-q")) {
+                queryFlag = true;
+            } else if (!arg.startsWith("-")) {
+                opts.add(arg);
+            }
+        }
+
+        if (opts.isEmpty() && !queryFlag) {
+            // Print all options
+            StringBuilder stdout = new StringBuilder();
+            ShoptOptions shopt = state.shoptOptions;
+            stdout.append("dotglob").append(shopt.dotglob ? "\ton\n" : "\t off\n");
+            stdout.append("extglob").append(shopt.extglob ? "\ton\n" : "\t off\n");
+            stdout.append("failglob").append(shopt.failglob ? "\ton\n" : "\t off\n");
+            stdout.append("globstar").append(shopt.globstar ? "\ton\n" : "\t off\n");
+            stdout.append("nullglob").append(shopt.nullglob ? "\ton\n" : "\t off\n");
+            return new ExecResult(stdout.toString(), "", 0);
+        }
+
+        for (String opt : opts) {
+            boolean value = setFlag || (!unsetFlag && !queryFlag);
+            switch (opt) {
+                case "dotglob" -> state.shoptOptions.dotglob = value;
+                case "extglob" -> state.shoptOptions.extglob = value;
+                case "failglob" -> state.shoptOptions.failglob = value;
+                case "globstar" -> state.shoptOptions.globstar = value;
+                case "nullglob" -> state.shoptOptions.nullglob = value;
+                case "nocaseglob" -> state.shoptOptions.nocaseglob = value;
+                case "expand_aliases" -> state.shoptOptions.expand_aliases = value;
+            }
+        }
+
+        return new ExecResult("", "", 0);
     }
 }

@@ -16,6 +16,7 @@ public class InterpreterState {
 
     // Core Environment
     Map<String, String> env;
+    Map<String, List<String>> indexedArrays;
     String cwd;
     String previousDir;
 
@@ -95,6 +96,7 @@ public class InterpreterState {
 
     public InterpreterState() {
         this.env = new LinkedHashMap<>();
+        this.indexedArrays = new LinkedHashMap<>();
         this.cwd = "/home/user";
         this.previousDir = "/home/user";
 
@@ -171,6 +173,10 @@ public class InterpreterState {
         InterpreterState copy = new InterpreterState();
 
         copy.env = new LinkedHashMap<>(this.env);
+        copy.indexedArrays = new LinkedHashMap<>();
+        for (Map.Entry<String, List<String>> entry : this.indexedArrays.entrySet()) {
+            copy.indexedArrays.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
         copy.cwd = this.cwd;
         copy.previousDir = this.previousDir;
 
