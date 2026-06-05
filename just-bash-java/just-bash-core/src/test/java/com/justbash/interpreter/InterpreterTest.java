@@ -233,4 +233,40 @@ class InterpreterTest {
         assertThat(result.exitCode()).isEqualTo(127);
         bash.shutdown();
     }
+
+    @Test
+    void endToEndSingleQuotes() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo 'hello world'").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void endToEndDoubleQuotes() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo \"hello world\"").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void endToEndMixedQuotes() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo hello'world'").join();
+        assertThat(result.stdout()).isEqualTo("helloworld\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void endToEndQuotedAndLiteral() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo 'hello'world").join();
+        assertThat(result.stdout()).isEqualTo("helloworld\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
 }

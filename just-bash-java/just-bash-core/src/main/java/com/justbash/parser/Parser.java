@@ -98,8 +98,45 @@ public class Parser {
 
     private WordNode parseWord() {
         Token token = advance();
-        return new WordNode(token.line(),
-            List.of(new LiteralPart(token.line(), token.value())));
+        return parseWordValue(token.value(), token.line());
+    }
+
+    private WordNode parseWordValue(String value, int line) {
+        List<WordPart> parts = new ArrayList<>();
+        int i = 0;
+        while (i < value.length()) {
+            char c = value.charAt(i);
+            if (c == '\'') {
+                int end = value.indexOf('\'', i + 1);
+                if (end == -1) {
+                    end = value.length();
+                }
+                parts.add(new SingleQuotedPart(line, value.substring(i + 1, end)));
+                i = end + 1;
+            } else if (c == '"') {
+                int end = value.indexOf('"', i + 1);
+                if (end == -1) {
+                    end = value.length();
+                }
+                String inner = value.substring(i + 1, end);
+                // For now, double-quoted content is treated as a single literal part.
+                // TODO: handle $var, `cmd`, and escape sequences inside double quotes.
+                List<WordPart> innerParts = new ArrayList<>();
+                innerParts.add(new LiteralPart(line, inner));
+                parts.add(new DoubleQuotedPart(line, innerParts));
+                i = end + 1;
+            } else {
+                int end = i;
+                while (end < value.length()
+                       && value.charAt(end) != '\''
+                       && value.charAt(end) != '"') {
+                    end++;
+                }
+                parts.add(new LiteralPart(line, value.substring(i, end)));
+                i = end;
+            }
+        }
+        return new WordNode(line, parts);
     }
 
     private boolean checkAssignment() {

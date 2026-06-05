@@ -105,7 +105,11 @@ public class Lexer {
 
     private Token readWord(int startLine, int startCol) {
         StringBuilder sb = new StringBuilder();
-        while (!isAtEnd() && !isWordDelimiter(peek())) {
+        while (!isAtEnd()) {
+            char ch = peek();
+            if (isWordDelimiter(ch)) {
+                break;
+            }
             sb.append(advance());
         }
         String value = sb.toString();
@@ -168,5 +172,9 @@ public class Lexer {
 
     private boolean isAtEnd() {
         return pos >= input.length();
+    }
+
+    private boolean isAtEnd(int offset) {
+        return pos + offset >= input.length();
     }
 }
