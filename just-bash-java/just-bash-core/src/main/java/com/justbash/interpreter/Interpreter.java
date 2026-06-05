@@ -1,13 +1,16 @@
 package com.justbash.interpreter;
 
 import com.justbash.BashExecResult;
+import com.justbash.Command;
 import com.justbash.ExecResult;
+import com.justbash.SimpleCommandContext;
 import com.justbash.ast.*;
 import com.justbash.ast.command.*;
 import com.justbash.ast.word.WordNode;
 import com.justbash.fs.IFileSystem;
 import com.justbash.interpreter.errors.*;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -128,8 +131,34 @@ public class Interpreter {
             return builtinResult.get();
         }
 
+        // Try registered external commands
+        Command externalCmd = options.commands().get(commandName);
+        if (externalCmd != null) {
+            Map<String, String> exportedEnv = buildExportedEnv();
+            SimpleCommandContext cmdCtx = new SimpleCommandContext(
+                options.fs(), state.cwd, state.env, exportedEnv,
+                stdin, options.limits()
+            );
+            try {
+                return externalCmd.execute(args, cmdCtx).join();
+            } catch (Exception e) {
+                return new ExecResult("", commandName + ": " + e.getMessage() + "\n", 1);
+            }
+        }
+
         // For MVP, unknown commands return exit 127
         String stderr = "bash: " + commandName + ": command not found\n";
         return new ExecResult("", stderr, 127);
+    }
+
+    private Map<String, String> buildExportedEnv() {
+        Map<String, String> result = new LinkedHashMap<>();
+        for (String name : state.exportedVars) {
+            String value = state.env.get(name);
+            if (value != null) {
+                result.put(name, value);
+            }
+        }
+        return result;
     }
 }
