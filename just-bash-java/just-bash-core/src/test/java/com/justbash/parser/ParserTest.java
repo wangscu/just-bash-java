@@ -97,4 +97,23 @@ class ParserTest {
         assertThat(group.body()).hasSize(1);
         assertThat(group.body().get(0).pipelines()).hasSize(2);
     }
+
+    @Test
+    void parseCaseStatement() {
+        ScriptNode ast = Parser.parse("case x in a) echo one;; b) echo two;; esac");
+        CaseNode caseNode = (CaseNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(caseNode.word().parts().get(0)).extracting("value").isEqualTo("x");
+        assertThat(caseNode.items()).hasSize(2);
+        assertThat(caseNode.items().get(0).patterns()).hasSize(1);
+        assertThat(caseNode.items().get(1).patterns()).hasSize(1);
+    }
+
+    @Test
+    void parseCaseWithPipePatterns() {
+        ScriptNode ast = Parser.parse("case x in a|b) echo match;; *) echo default;; esac");
+        CaseNode caseNode = (CaseNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(caseNode.items()).hasSize(2);
+        assertThat(caseNode.items().get(0).patterns()).hasSize(2);
+        assertThat(caseNode.items().get(1).patterns()).hasSize(1);
+    }
 }

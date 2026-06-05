@@ -176,4 +176,85 @@ class CompoundCommandTest {
         assertThat(result.exitCode()).isEqualTo(0);
         bash.shutdown();
     }
+
+    @Test
+    void caseMatchFirst() {
+        Bash bash = new Bash();
+        var result = bash.exec("case a in a) echo one;; b) echo two;; esac").join();
+        assertThat(result.stdout()).isEqualTo("one\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseMatchSecond() {
+        Bash bash = new Bash();
+        var result = bash.exec("case b in a) echo one;; b) echo two;; esac").join();
+        assertThat(result.stdout()).isEqualTo("two\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseDefault() {
+        Bash bash = new Bash();
+        var result = bash.exec("case z in a) echo one;; *) echo default;; esac").join();
+        assertThat(result.stdout()).isEqualTo("default\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseMultiplePatterns() {
+        Bash bash = new Bash();
+        var result = bash.exec("case b in a|b) echo match;; *) echo no;; esac").join();
+        assertThat(result.stdout()).isEqualTo("match\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseWithVariable() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=hello; case $x in hello) echo yes;; *) echo no;; esac").join();
+        assertThat(result.stdout()).isEqualTo("yes\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseGlobStar() {
+        Bash bash = new Bash();
+        var result = bash.exec("case abc in *) echo match;; esac").join();
+        assertThat(result.stdout()).isEqualTo("match\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseGlobQuestion() {
+        Bash bash = new Bash();
+        var result = bash.exec("case a in ?) echo single;; *) echo multi;; esac").join();
+        assertThat(result.stdout()).isEqualTo("single\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseNoMatch() {
+        Bash bash = new Bash();
+        var result = bash.exec("case x in a) echo one;; esac").join();
+        assertThat(result.stdout()).isEmpty();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void caseEmptyBody() {
+        Bash bash = new Bash();
+        var result = bash.exec("case a in a);; esac").join();
+        assertThat(result.stdout()).isEmpty();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
 }

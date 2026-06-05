@@ -178,8 +178,43 @@ public class Parser {
     }
 
     private CaseNode parseCase() {
-        throw new ParseException("case not yet implemented",
-            current().line(), current().column());
+        int line = current().line();
+        expect(TokenType.CASE);
+        WordNode word = parseWord();
+        skipNewlines();
+        expect(TokenType.IN);
+        skipNewlines();
+
+        List<CaseNode.CaseItemNode> items = new ArrayList<>();
+        while (!check(TokenType.ESAC) && !check(TokenType.EOF)) {
+            // Patterns: word | word | word
+            List<WordNode> patterns = new ArrayList<>();
+            patterns.add(parseWord());
+            while (match(TokenType.PIPE)) {
+                patterns.add(parseWord());
+            }
+            expect(TokenType.RPAREN);
+            skipNewlines();
+
+            // Body (stops at ;; or esac)
+            List<StatementNode> body = parseCaseItemBody();
+
+            // Terminator ;; (DSEMI)
+            if (!match(TokenType.DSEMI)) {
+                // Tolerate missing terminator before esac
+                if (!check(TokenType.ESAC) && !check(TokenType.EOF)) {
+                    throw new ParseException("Expected ;;",
+                        current().line(), current().column());
+                }
+            }
+            skipNewlines();
+            items.add(new CaseNode.CaseItemNode(line, patterns, body,
+                CaseNode.CaseItemNode.Terminator.DSEMI));
+        }
+
+        skipNewlines();
+        expect(TokenType.ESAC);
+        return new CaseNode(line, word, items, List.of());
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -190,6 +225,17 @@ public class Parser {
         skipNewlines();
         List<StatementNode> statements = new ArrayList<>();
         while (!isCompoundEndToken() && !check(TokenType.EOF)) {
+            if (!canStartStatement()) break;
+            StatementNode stmt = parseStatement();
+            if (stmt != null) statements.add(stmt);
+            skipNewlines();
+        }
+        return statements;
+    }
+
+    private List<StatementNode> parseCaseItemBody() {
+        List<StatementNode> statements = new ArrayList<>();
+        while (!check(TokenType.DSEMI, TokenType.ESAC, TokenType.EOF)) {
             if (!canStartStatement()) break;
             StatementNode stmt = parseStatement();
             if (stmt != null) statements.add(stmt);

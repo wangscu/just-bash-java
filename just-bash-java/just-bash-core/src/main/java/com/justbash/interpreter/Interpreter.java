@@ -110,6 +110,7 @@ public class Interpreter {
             case IfNode ifNode -> executeIfCommand(ifNode, stdin);
             case ForNode forNode -> executeForCommand(forNode, stdin);
             case WhileNode whileNode -> executeWhileCommand(whileNode, stdin);
+            case CaseNode caseNode -> executeCaseCommand(caseNode, stdin);
             case GroupNode group -> executeGroupCommand(group, stdin);
             case SubshellNode subshell -> executeSubshellCommand(subshell, stdin);
             default -> new ExecResult("", "", 0); // Stub for MVP
@@ -254,6 +255,63 @@ public class Interpreter {
     private ExecResult executeSubshellCommand(SubshellNode subshell, String stdin) {
         // For MVP, execute in same state (full subshell isolation is future work)
         return executeStatements(subshell.body(), stdin);
+    }
+
+    private ExecResult executeCaseCommand(CaseNode caseNode, String stdin) {
+        String word = expansion.expandWord(caseNode.word(), state).get(0);
+
+        for (CaseNode.CaseItemNode item : caseNode.items()) {
+            boolean matched = false;
+            for (WordNode patternWord : item.patterns()) {
+                String pattern = expansion.expandWord(patternWord, state).get(0);
+                if (globMatch(word, pattern)) {
+                    matched = true;
+                    break;
+                }
+            }
+            if (matched) {
+                return executeStatements(item.body(), stdin);
+            }
+        }
+
+        return new ExecResult("", "", 0);
+    }
+
+    private boolean globMatch(String text, String pattern) {
+        StringBuilder regex = new StringBuilder();
+        int i = 0;
+        while (i < pattern.length()) {
+            char c = pattern.charAt(i);
+            switch (c) {
+                case '*' -> regex.append(".*");
+                case '?' -> regex.append(".");
+                case '[' -> {
+                    int end = pattern.indexOf(']', i);
+                    if (end == -1) {
+                        regex.append("\\[");
+                    } else {
+                        regex.append(pattern.substring(i, end + 1));
+                        i = end;
+                    }
+                }
+                case '\\' -> {
+                    if (i + 1 < pattern.length()) {
+                        regex.append('\\').append(pattern.charAt(i + 1));
+                        i++;
+                    } else {
+                        regex.append("\\\\");
+                    }
+                }
+                default -> {
+                    if ("[](){}^$|.+".indexOf(c) >= 0) {
+                        regex.append('\\');
+                    }
+                    regex.append(c);
+                }
+            }
+            i++;
+        }
+        return text.matches(regex.toString());
     }
 
     private ExecResult executeSimpleCommand(SimpleCommandNode cmd, String stdin) {
