@@ -4,13 +4,18 @@ import com.justbash.Bash;
 import com.justbash.BashExecResult;
 import com.justbash.BashOptions;
 import com.justbash.ExecResult;
+import com.justbash.commands.awk.AwkCommand;
 import com.justbash.commands.cat.CatCommand;
+import com.justbash.commands.chmod.ChmodCommand;
 import com.justbash.commands.column.ColumnCommand;
 import com.justbash.commands.comm.CommCommand;
 import com.justbash.commands.cut.CutCommand;
+import com.justbash.commands.date.DateCommand;
 import com.justbash.commands.diff.DiffCommand;
+import com.justbash.commands.env.EnvCommand;
 import com.justbash.commands.expr.ExprCommand;
 import com.justbash.commands.file.FileCommand;
+import com.justbash.commands.find.FindCommand;
 import com.justbash.commands.fold.FoldCommand;
 import com.justbash.commands.head.HeadCommand;
 import com.justbash.commands.join.JoinCommand;
@@ -21,6 +26,7 @@ import com.justbash.commands.paste.PasteCommand;
 import com.justbash.commands.printf.PrintfCommand;
 import com.justbash.commands.rev.RevCommand;
 import com.justbash.commands.rg.RgCommand;
+import com.justbash.commands.sed.SedCommand;
 import com.justbash.commands.seq.SeqCommand;
 import com.justbash.commands.sort.SortCommand;
 import com.justbash.commands.split.SplitCommand;
@@ -46,13 +52,18 @@ class TextCommandTest {
             java.util.Optional.empty(), java.util.Optional.empty(),
             java.util.Optional.empty(), java.util.Optional.empty()
         ));
+        bash.registerCommand(new AwkCommand());
         bash.registerCommand(new CatCommand());
+        bash.registerCommand(new ChmodCommand());
         bash.registerCommand(new ColumnCommand());
         bash.registerCommand(new CommCommand());
         bash.registerCommand(new CutCommand());
+        bash.registerCommand(new DateCommand());
         bash.registerCommand(new DiffCommand());
+        bash.registerCommand(new EnvCommand());
         bash.registerCommand(new ExprCommand());
         bash.registerCommand(new FileCommand());
+        bash.registerCommand(new FindCommand());
         bash.registerCommand(new FoldCommand());
         bash.registerCommand(new HeadCommand());
         bash.registerCommand(new JoinCommand());
@@ -63,6 +74,7 @@ class TextCommandTest {
         bash.registerCommand(new PrintfCommand());
         bash.registerCommand(new RevCommand());
         bash.registerCommand(new RgCommand());
+        bash.registerCommand(new SedCommand());
         bash.registerCommand(new SeqCommand());
         bash.registerCommand(new SortCommand());
         bash.registerCommand(new SplitCommand());
@@ -84,13 +96,18 @@ class TextCommandTest {
             java.util.Optional.empty(), java.util.Optional.empty(),
             java.util.Optional.empty(), java.util.Optional.empty()
         ));
+        bash.registerCommand(new AwkCommand());
         bash.registerCommand(new CatCommand());
+        bash.registerCommand(new ChmodCommand());
         bash.registerCommand(new ColumnCommand());
         bash.registerCommand(new CommCommand());
         bash.registerCommand(new CutCommand());
+        bash.registerCommand(new DateCommand());
         bash.registerCommand(new DiffCommand());
+        bash.registerCommand(new EnvCommand());
         bash.registerCommand(new ExprCommand());
         bash.registerCommand(new FileCommand());
+        bash.registerCommand(new FindCommand());
         bash.registerCommand(new FoldCommand());
         bash.registerCommand(new HeadCommand());
         bash.registerCommand(new JoinCommand());
@@ -101,6 +118,7 @@ class TextCommandTest {
         bash.registerCommand(new PrintfCommand());
         bash.registerCommand(new RevCommand());
         bash.registerCommand(new RgCommand());
+        bash.registerCommand(new SedCommand());
         bash.registerCommand(new SeqCommand());
         bash.registerCommand(new SortCommand());
         bash.registerCommand(new SplitCommand());
@@ -825,6 +843,338 @@ class TextCommandTest {
         Bash bash = createBashWithFile("/tmp/jq4", "{\"a\":1,\"b\":2}\n");
         BashExecResult result = bash.exec("jq keys /tmp/jq4").join();
         assertThat(result.stdout()).contains("a").contains("b");
+        bash.shutdown();
+    }
+
+    // ========== env ==========
+
+    @Test
+    void envPrintsEnvironment() {
+        InMemoryFs fs = new InMemoryFs();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.of(java.util.Map.of("HOME", "/home/user", "PATH", "/usr/bin")),
+            java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new EnvCommand());
+        BashExecResult result = bash.exec("env").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("HOME=/home/user");
+        assertThat(result.stdout()).contains("PATH=/usr/bin");
+        bash.shutdown();
+    }
+
+    @Test
+    void envIgnoresEnvironment() {
+        InMemoryFs fs = new InMemoryFs();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.of(java.util.Map.of("HOME", "/home/user")),
+            java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new EnvCommand());
+        BashExecResult result = bash.exec("env -i").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEmpty();
+        bash.shutdown();
+    }
+
+    @Test
+    void envUnsetsVariable() {
+        InMemoryFs fs = new InMemoryFs();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.of(java.util.Map.of("HOME", "/home/user", "PATH", "/usr/bin")),
+            java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new EnvCommand());
+        BashExecResult result = bash.exec("env -u PATH").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("HOME=/home/user");
+        assertThat(result.stdout()).doesNotContain("PATH");
+        bash.shutdown();
+    }
+
+    // ========== chmod ==========
+
+    @Test
+    void chmodNumericMode() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/chmodtest", new IFileSystem.StringContent("x")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ChmodCommand());
+        BashExecResult result = bash.exec("chmod 755 /tmp/chmodtest").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void chmodSymbolicMode() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/chmodtest2", new IFileSystem.StringContent("x")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ChmodCommand());
+        BashExecResult result = bash.exec("chmod u+x /tmp/chmodtest2").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    // ========== date ==========
+
+    @Test
+    void dateDefaultFormat() {
+        Bash bash = createBash();
+        bash.registerCommand(new DateCommand());
+        BashExecResult result = bash.exec("date").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isNotEmpty();
+        bash.shutdown();
+    }
+
+    @Test
+    void dateCustomFormat() {
+        Bash bash = createBash();
+        bash.registerCommand(new DateCommand());
+        BashExecResult result = bash.exec("date +%Y-%m-%d").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).matches("\\d{4}-\\d{2}-\\d{2}\\n");
+        bash.shutdown();
+    }
+
+    // ========== sed ==========
+
+    @Test
+    void sedSubstitute() {
+        Bash bash = createBashWithFile("/tmp/sed1", "hello world\n");
+        bash.registerCommand(new SedCommand());
+        BashExecResult result = bash.exec("sed 's/world/earth/' /tmp/sed1").join();
+        assertThat(result.stdout()).isEqualTo("hello earth\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void sedGlobalSubstitute() {
+        Bash bash = createBashWithFile("/tmp/sed2", "a a a\n");
+        bash.registerCommand(new SedCommand());
+        BashExecResult result = bash.exec("sed 's/a/X/g' /tmp/sed2").join();
+        assertThat(result.stdout()).isEqualTo("X X X\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void sedDeleteLine() {
+        Bash bash = createBashWithFile("/tmp/sed3", "keep\ndelete\nkeep2\n");
+        bash.registerCommand(new SedCommand());
+        BashExecResult result = bash.exec("sed '/delete/d' /tmp/sed3").join();
+        assertThat(result.stdout()).isEqualTo("keep\nkeep2\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void sedPrintLineNumber() {
+        Bash bash = createBashWithFile("/tmp/sed4", "a\nb\n");
+        bash.registerCommand(new SedCommand());
+        BashExecResult result = bash.exec("sed -n '1p' /tmp/sed4").join();
+        assertThat(result.stdout()).isEqualTo("a\n");
+        bash.shutdown();
+    }
+
+    // ========== find ==========
+
+    @Test
+    void findByName() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.mkdir("/tmp/findtest").join();
+        fs.writeFile("/tmp/findtest/hello.txt", new IFileSystem.StringContent("x")).join();
+        fs.writeFile("/tmp/findtest/world.log", new IFileSystem.StringContent("y")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new FindCommand());
+        BashExecResult result = bash.exec("find /tmp/findtest -name '*.txt'").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("hello.txt");
+        assertThat(result.stdout()).doesNotContain("world.log");
+        bash.shutdown();
+    }
+
+    @Test
+    void findByType() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.mkdir("/tmp/findtype").join();
+        fs.writeFile("/tmp/findtype/file.txt", new IFileSystem.StringContent("x")).join();
+        fs.mkdir("/tmp/findtype/subdir").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new FindCommand());
+        BashExecResult result = bash.exec("find /tmp/findtype -type d").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("subdir");
+        assertThat(result.stdout()).doesNotContain("file.txt");
+        bash.shutdown();
+    }
+
+    // ========== awk ==========
+
+    private Bash createBashWithFiles(java.util.Map<String, String> files) {
+        InMemoryFs fs = new InMemoryFs();
+        for (var entry : files.entrySet()) {
+            fs.writeFile(entry.getKey(), new IFileSystem.StringContent(entry.getValue())).join();
+        }
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new AwkCommand());
+        bash.registerCommand(new CatCommand());
+        bash.registerCommand(new ColumnCommand());
+        bash.registerCommand(new CommCommand());
+        bash.registerCommand(new CutCommand());
+        bash.registerCommand(new DateCommand());
+        bash.registerCommand(new DiffCommand());
+        bash.registerCommand(new EnvCommand());
+        bash.registerCommand(new ExprCommand());
+        bash.registerCommand(new FileCommand());
+        bash.registerCommand(new FindCommand());
+        bash.registerCommand(new FoldCommand());
+        bash.registerCommand(new HeadCommand());
+        bash.registerCommand(new JoinCommand());
+        bash.registerCommand(new JqCommand());
+        bash.registerCommand(new LsCommand());
+        bash.registerCommand(new NlCommand());
+        bash.registerCommand(new PasteCommand());
+        bash.registerCommand(new PrintfCommand());
+        bash.registerCommand(new RevCommand());
+        bash.registerCommand(new RgCommand());
+        bash.registerCommand(new SedCommand());
+        bash.registerCommand(new SeqCommand());
+        bash.registerCommand(new SortCommand());
+        bash.registerCommand(new SplitCommand());
+        bash.registerCommand(new TailCommand());
+        bash.registerCommand(new TrCommand());
+        bash.registerCommand(new TreeCommand());
+        bash.registerCommand(new UniqCommand());
+        bash.registerCommand(new WcCommand());
+        bash.registerCommand(new XargsCommand());
+        return bash;
+    }
+
+    @Test
+    void awkPrintField() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awk1", "one two three\n",
+            "/tmp/awkprog", "{print $2}\n"
+        ));
+        BashExecResult result = bash.exec("awk -f /tmp/awkprog /tmp/awk1").join();
+        assertThat(result.stdout()).isEqualTo("two\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkPrintLine() {
+        Bash bash = createBashWithFile("/tmp/awk2", "hello\nworld\n");
+        bash.registerCommand(new AwkCommand());
+        BashExecResult result = bash.exec("awk '1' /tmp/awk2").join();
+        assertThat(result.stdout()).isEqualTo("hello\nworld\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkBeginBlock() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awkprog2", "BEGIN {print \"start\"}\n"
+        ));
+        BashExecResult result = bash.exec("awk -f /tmp/awkprog2").join();
+        assertThat(result.stdout()).isEqualTo("start\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkPatternMatch() {
+        Bash bash = createBashWithFile("/tmp/awk3", "apple\nbanana\ncherry\n");
+        bash.registerCommand(new AwkCommand());
+        BashExecResult result = bash.exec("awk '/a/' /tmp/awk3").join();
+        assertThat(result.stdout()).isEqualTo("apple\nbanana\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkFieldSeparator() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awk4", "a,b,c\n",
+            "/tmp/awkprog4", "{print $2}\n"
+        ));
+        BashExecResult result = bash.exec("awk -F, -f /tmp/awkprog4 /tmp/awk4").join();
+        assertThat(result.stdout()).isEqualTo("b\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkVariables() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awk5", "10\n20\n30\n",
+            "/tmp/awkprog5", "{sum += $1} END {print sum}\n"
+        ));
+        BashExecResult result = bash.exec("awk -f /tmp/awkprog5 /tmp/awk5").join();
+        assertThat(result.stdout()).isEqualTo("60\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkIfStatement() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awk6", "1\n2\n3\n",
+            "/tmp/awkprog6", "{if ($1 > 1) print \"big\"}\n"
+        ));
+        BashExecResult result = bash.exec("awk -f /tmp/awkprog6 /tmp/awk6").join();
+        assertThat(result.stdout()).isEqualTo("big\nbig\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkLengthFunction() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awk7", "hello\n",
+            "/tmp/awkprog7", "{print length}\n"
+        ));
+        BashExecResult result = bash.exec("awk -f /tmp/awkprog7 /tmp/awk7").join();
+        assertThat(result.stdout()).isEqualTo("5\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void awkSubstituteFunction() {
+        Bash bash = createBashWithFiles(java.util.Map.of(
+            "/tmp/awk8", "hello world\n",
+            "/tmp/awkprog8", "{gsub(/world/, \"earth\"); print}\n"
+        ));
+        BashExecResult result = bash.exec("awk -f /tmp/awkprog8 /tmp/awk8").join();
+        assertThat(result.stdout()).isEqualTo("hello earth\n");
         bash.shutdown();
     }
 }
