@@ -6,8 +6,7 @@ import com.justbash.ExecResult;
 import com.justbash.SimpleCommandContext;
 import com.justbash.ast.*;
 import com.justbash.ast.command.*;
-import com.justbash.ast.word.LiteralPart;
-import com.justbash.ast.word.WordNode;
+import com.justbash.ast.word.*;
 import com.justbash.parser.Parser;
 import com.justbash.fs.IFileSystem;
 import com.justbash.fs.WriteFileOptions;
@@ -54,6 +53,79 @@ public class Interpreter {
         }
 
         return new ExecResult(stdout, stderr, exitCode);
+    }
+
+    private String reconstructStatement(StatementNode stmt) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < stmt.pipelines().size(); i++) {
+            if (i > 0) {
+                var op = i <= stmt.operators().size() ? stmt.operators().get(i - 1) : null;
+                String sep = switch (op) {
+                    case AND -> " && ";
+                    case OR -> " || ";
+                    case SEMICOLON -> "; ";
+                    case null -> "; ";
+                };
+                sb.append(sep);
+            }
+            sb.append(reconstructPipeline(stmt.pipelines().get(i)));
+        }
+        return sb.toString();
+    }
+
+    private String reconstructPipeline(PipelineNode pipeline) {
+        StringBuilder sb = new StringBuilder();
+        if (pipeline.negated()) sb.append("! ");
+        for (int i = 0; i < pipeline.commands().size(); i++) {
+            if (i > 0) sb.append(" | ");
+            sb.append(reconstructCommand(pipeline.commands().get(i)));
+        }
+        return sb.toString();
+    }
+
+    private String reconstructCommand(CommandNode cmd) {
+        return switch (cmd) {
+            case SimpleCommandNode simple -> reconstructSimpleCommand(simple);
+            case GroupNode group -> "{ ... }";
+            case SubshellNode subshell -> "(...)";
+            case IfNode ifNode -> "if ...; then ...; fi";
+            case ForNode forNode -> "for ...; do ...; done";
+            case WhileNode whileNode -> whileNode.isUntil() ? "until ...; do ...; done" : "while ...; do ...; done";
+            case CaseNode caseNode -> "case ... in ... esac";
+            case FunctionDefNode func -> "function " + func.name() + "() { ... }";
+            case ArithmeticCommandNode arith -> "(( ... ))";
+            case ConditionalCommandNode cond -> "[[ ... ]]";
+            default -> "...";
+        };
+    }
+
+    private String reconstructSimpleCommand(SimpleCommandNode cmd) {
+        StringBuilder sb = new StringBuilder();
+        // Reconstruct from original word nodes (not expanded)
+        if (cmd.name() != null) {
+            sb.append(reconstructWord(cmd.name()));
+        }
+        for (WordNode arg : cmd.args()) {
+            sb.append(" ").append(reconstructWord(arg));
+        }
+        return sb.toString();
+    }
+
+    private String reconstructWord(WordNode word) {
+        StringBuilder sb = new StringBuilder();
+        for (var part : word.parts()) {
+            sb.append(switch (part) {
+                case LiteralPart lp -> lp.value();
+                case ParameterExpansionPart pep -> "$" + (pep.operation().isPresent() ? "{" + pep.parameter() + "}" : pep.parameter());
+                case CommandSubstitutionPart csp -> "$(...)";
+                case ArithmeticExpansionPart aep -> "$((" + aep.expression() + "))";
+                case DoubleQuotedPart dqp -> "\"" + reconstructWord(new WordNode(0, dqp.parts())) + "\"";
+                case SingleQuotedPart sqp -> "'" + sqp.value() + "'";
+                case EscapedPart ep -> ep.value();
+                default -> "";
+            });
+        }
+        return sb.toString();
     }
 
     /** Execute a ScriptNode (top-level entry point) */
@@ -107,6 +179,7 @@ public class Interpreter {
 
     /** Execute a StatementNode (handles &&, || between pipelines) */
     public ExecResult executeStatement(StatementNode stmt) {
+        state.currentLine = stmt.line();
         String stdout = "";
         String stderr = "";
         int exitCode = 0;
@@ -119,6 +192,14 @@ public class Interpreter {
 
             if (operator == StatementNode.StatementOperator.AND && exitCode != 0) continue;
             if (operator == StatementNode.StatementOperator.OR && exitCode == 0) continue;
+
+            // verbose: print reconstructed command before execution
+            if (state.options.verbose) {
+                String reconstructed = reconstructPipeline(pipelines.get(i));
+                if (!reconstructed.isEmpty()) {
+                    stderr += reconstructed + "\n";
+                }
+            }
 
             try {
                 var result = pipelineExecutor.executePipeline(pipelines.get(i), state);
@@ -140,6 +221,17 @@ public class Interpreter {
             }
             state.lastExitCode = exitCode;
             state.env.put("?", String.valueOf(exitCode));
+
+            // errexit: exit immediately on non-zero, except in conditions,
+            // negated pipelines, or &&/|| chains
+            boolean hasAndOr = operators.stream().anyMatch(op ->
+                op == StatementNode.StatementOperator.AND || op == StatementNode.StatementOperator.OR);
+            if (state.options.errexit && exitCode != 0
+                    && !state.inCondition
+                    && !pipelines.get(i).negated()
+                    && !hasAndOr) {
+                throw new ExitException(exitCode, stdout, stderr);
+            }
         }
 
         return new ExecResult(stdout, stderr, exitCode);
@@ -201,7 +293,14 @@ public class Interpreter {
 
     private ExecResult executeIfCommand(IfNode ifNode, String stdin) {
         for (IfNode.IfClause clause : ifNode.clauses()) {
-            int conditionExit = executeStatements(clause.condition(), stdin).exitCode();
+            boolean saved = state.inCondition;
+            state.inCondition = true;
+            int conditionExit;
+            try {
+                conditionExit = executeStatements(clause.condition(), stdin).exitCode();
+            } finally {
+                state.inCondition = saved;
+            }
             if (conditionExit == 0) {
                 return executeStatements(clause.body(), stdin);
             }
@@ -229,6 +328,12 @@ public class Interpreter {
                 // Default: iterate over $@ (positional parameters)
                 String at = state.env.getOrDefault("@", "");
                 values = at.isEmpty() ? List.of() : List.of(at.split(" "));
+            }
+
+            // Check for nounset expansion error
+            var expansionError = checkExpansionError();
+            if (expansionError != null) {
+                return expansionError;
             }
 
             String stdout = "";
@@ -298,7 +403,14 @@ public class Interpreter {
                             "), increase executionLimits.maxLoopIterations",
                         "maxLoopIterations");
                 }
-                int condExit = executeStatements(whileNode.condition(), stdin).exitCode();
+                boolean saved = state.inCondition;
+                state.inCondition = true;
+                int condExit;
+                try {
+                    condExit = executeStatements(whileNode.condition(), stdin).exitCode();
+                } finally {
+                    state.inCondition = saved;
+                }
                 boolean shouldRun = whileNode.isUntil() ? (condExit != 0) : (condExit == 0);
                 if (!shouldRun) break;
 
@@ -367,6 +479,12 @@ public class Interpreter {
     private ExecResult executeCaseCommand(CaseNode caseNode, String stdin) {
         ExpansionEngine.ScriptExecutor executor = this::executeScriptRaw;
         String word = expansion.expandWord(caseNode.word(), state, executor).get(0);
+
+        // Check for nounset expansion error
+        var expansionError = checkExpansionError();
+        if (expansionError != null) {
+            return expansionError;
+        }
 
         for (CaseNode.CaseItemNode item : caseNode.items()) {
             boolean matched = false;
@@ -508,6 +626,12 @@ public class Interpreter {
             }
         }
 
+        // Check for nounset expansion error after assignments and redirections
+        var expansionError = checkExpansionError();
+        if (expansionError != null) {
+            return expansionError;
+        }
+
         if (cmd.name() == null) {
             // Assignment-only command — still apply output redirections
             return applyOutputRedirections(new ExecResult("", "", 0), redirects, redirectPaths);
@@ -519,6 +643,13 @@ public class Interpreter {
 
         // Expand command name
         String commandName = expansion.expandWord(cmd.name(), state, executor).get(0);
+
+        // Check for nounset expansion error
+        expansionError = checkExpansionError();
+        if (expansionError != null) {
+            state.groupStdin = savedGroupStdin;
+            return expansionError;
+        }
 
         // Alias expansion
         List<String> args;
@@ -553,6 +684,20 @@ public class Interpreter {
             }
         }
 
+        // Check for nounset expansion error after args expansion
+        expansionError = checkExpansionError();
+        if (expansionError != null) {
+            state.groupStdin = savedGroupStdin;
+            return expansionError;
+        }
+
+        // Update $_ (last argument of previous command)
+        if (!args.isEmpty()) {
+            state.lastArg = args.get(args.size() - 1);
+        } else {
+            state.lastArg = commandName;
+        }
+
         // Handle exec command: apply redirections to shell state, optionally run command
         boolean isExec = commandName.equals("exec");
         if (isExec) {
@@ -564,6 +709,18 @@ public class Interpreter {
             }
             commandName = args.get(0);
             args = new ArrayList<>(args.subList(1, args.size()));
+        }
+
+        // xtrace: print expanded command before execution
+        String xtraceOutput = "";
+        if (state.options.xtrace) {
+            StringBuilder trace = new StringBuilder("+ ");
+            trace.append(commandName);
+            for (String arg : args) {
+                trace.append(" ").append(arg);
+            }
+            trace.append("\n");
+            xtraceOutput = trace.toString();
         }
 
         ExecResult result;
@@ -602,6 +759,11 @@ public class Interpreter {
         state.groupStdin = savedGroupStdin;
         result = applyOutputRedirections(result, redirects, redirectPaths);
         result = applyPersistentOutputRedirect(result);
+
+        // Prepend xtrace output to stderr
+        if (!xtraceOutput.isEmpty()) {
+            result = new ExecResult(result.stdout(), xtraceOutput + result.stderr(), result.exitCode());
+        }
 
         // Execute pending output process substitutions
         for (var pending : new ArrayList<>(state.pendingOutputProcessSubs)) {
@@ -923,6 +1085,17 @@ public class Interpreter {
             state.popLocalScope();
             state.callDepth--;
         }
+    }
+
+    private ExecResult checkExpansionError() {
+        if (state.expansionExitCode != null) {
+            int code = state.expansionExitCode;
+            String stderr = state.expansionStderr;
+            state.expansionExitCode = null;
+            state.expansionStderr = "";
+            return new ExecResult("", stderr, code);
+        }
+        return null;
     }
 
     private static int parseIntOrZero(String s) {

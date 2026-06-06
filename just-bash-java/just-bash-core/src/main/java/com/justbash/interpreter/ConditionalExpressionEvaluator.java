@@ -3,6 +3,9 @@ package com.justbash.interpreter;
 import com.justbash.ast.word.WordNode;
 import com.justbash.ast.expression.*;
 import com.justbash.fs.IFileSystem;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class ConditionalExpressionEvaluator {
@@ -88,8 +91,21 @@ public class ConditionalExpressionEvaluator {
             case "!=" -> !globMatch(left, right);
             case "=~" -> {
                 try {
-                    yield Pattern.compile(right).matcher(left).find();
+                    Matcher matcher = Pattern.compile(right).matcher(left);
+                    boolean found = matcher.find();
+                    if (found) {
+                        List<String> matches = new ArrayList<>();
+                        matches.add(matcher.group()); // entire match
+                        for (int i = 1; i <= matcher.groupCount(); i++) {
+                            matches.add(matcher.group(i) != null ? matcher.group(i) : "");
+                        }
+                        state.indexedArrays.put("BASH_REMATCH", matches);
+                    } else {
+                        state.indexedArrays.put("BASH_REMATCH", List.of());
+                    }
+                    yield found;
                 } catch (Exception e) {
+                    state.indexedArrays.put("BASH_REMATCH", List.of());
                     yield false;
                 }
             }

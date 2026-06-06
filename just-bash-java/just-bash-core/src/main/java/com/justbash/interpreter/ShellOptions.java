@@ -33,6 +33,19 @@ public class ShellOptions {
         return new ShellOptions();
     }
 
+    public boolean errexit() { return errexit; }
+    public boolean pipefail() { return pipefail; }
+    public boolean nounset() { return nounset; }
+    public boolean xtrace() { return xtrace; }
+    public boolean verbose() { return verbose; }
+    public boolean posix() { return posix; }
+    public boolean allexport() { return allexport; }
+    public boolean noclobber() { return noclobber; }
+    public boolean noglob() { return noglob; }
+    public boolean noexec() { return noexec; }
+    public boolean vi() { return vi; }
+    public boolean emacs() { return emacs; }
+
     public ShellOptions copy() {
         ShellOptions copy = new ShellOptions();
         copy.errexit = this.errexit;

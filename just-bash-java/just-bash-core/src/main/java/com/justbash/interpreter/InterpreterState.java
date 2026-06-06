@@ -369,6 +369,8 @@ public class InterpreterState {
         this.exportedVars = exportedVars;
     }
 
+    public ShellOptions getOptions() { return options; }
+
     public String getPreviousDir() {
         return previousDir;
     }

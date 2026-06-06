@@ -36,6 +36,7 @@ public class Bash {
 
         // Initialize persistent state
         this.state = InterpreterState.defaults();
+        this.state.getEnv().put("0", "bash");
         this.state.getEnv().put("HOME", "/home/user");
         this.state.getEnv().put("PATH", "/usr/bin:/bin");
         this.state.getEnv().put("IFS", " \t\n");

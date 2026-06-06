@@ -61,11 +61,11 @@ public class ExpansionEngine {
                                           ScriptExecutor executor) {
         String param = pep.parameter();
 
-        // Special parameter $# - positional parameter count
-        if (param.equals("#")) {
-            String count = state.env.getOrDefault("#", "0");
+        // Special parameters
+        String specialValue = resolveSpecialParameter(param, state);
+        if (specialValue != null) {
             for (StringBuilder sb : builders) {
-                sb.append(count);
+                sb.append(specialValue);
             }
             return;
         }
@@ -231,9 +231,22 @@ public class ExpansionEngine {
         }
 
         // No operation - regular parameter expansion
+        // nounset: treat unset regular variables as an error
+        if (state.options.nounset && isRegularVar(param)
+                && !state.env.containsKey(param)
+                && !state.indexedArrays.containsKey(param)) {
+            state.expansionExitCode = 1;
+            state.expansionStderr = "bash: " + param + ": unbound variable\n";
+            return;
+        }
         for (StringBuilder sb : builders) {
             sb.append(value);
         }
+    }
+
+    private boolean isRegularVar(String param) {
+        return !param.isEmpty()
+            && (Character.isLetter(param.charAt(0)) || param.charAt(0) == '_');
     }
 
     private String resolveParameterValue(String param, InterpreterState state) {
@@ -242,6 +255,30 @@ public class ExpansionEngine {
             return arr.get(0);
         }
         return state.env.getOrDefault(param, "");
+    }
+
+    private String resolveSpecialParameter(String param, InterpreterState state) {
+        return switch (param) {
+            case "?" -> String.valueOf(state.lastExitCode);
+            case "$" -> String.valueOf(state.bashPid != 0 ? state.bashPid : state.virtualPid);
+            case "!" -> String.valueOf(state.lastBackgroundPid);
+            case "-" -> buildOptionFlags(state);
+            case "_" -> state.lastArg;
+            case "RANDOM" -> String.valueOf((int) (Math.random() * 32768));
+            case "SECONDS" -> String.valueOf((System.currentTimeMillis() - state.startTime) / 1000);
+            case "LINENO" -> String.valueOf(state.currentLine);
+            case "PPID" -> String.valueOf(state.virtualPpid);
+            default -> null;
+        };
+    }
+
+    private String buildOptionFlags(InterpreterState state) {
+        StringBuilder sb = new StringBuilder();
+        if (state.options.errexit) sb.append('e');
+        if (state.options.nounset) sb.append('u');
+        if (state.options.xtrace) sb.append('x');
+        if (state.options.verbose) sb.append('v');
+        return sb.toString();
     }
 
     private String applyPatternRemoval(String value, PatternRemovalOp op,

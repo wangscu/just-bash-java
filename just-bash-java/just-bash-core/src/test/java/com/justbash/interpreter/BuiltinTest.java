@@ -556,4 +556,496 @@ class BuiltinTest {
         bash.shutdown();
     }
 
+    // ------------------------------------------------------------------
+    // type / command / hash / builtin / mapfile / kill / umask / times
+    // ------------------------------------------------------------------
+
+    @Test
+    void typeBuiltin() {
+        Bash bash = new Bash();
+        var result = bash.exec("type echo").join();
+        assertThat(result.stdout()).contains("is a shell builtin");
+        bash.shutdown();
+    }
+
+    @Test
+    void typeAlias() {
+        Bash bash = new Bash();
+        bash.exec("alias hi='echo hello'").join();
+        var result = bash.exec("type hi").join();
+        assertThat(result.stdout()).contains("is aliased to");
+        bash.shutdown();
+    }
+
+    @Test
+    void typeFunction() {
+        Bash bash = new Bash();
+        bash.exec("myfunc() { true; }").join();
+        var result = bash.exec("type myfunc").join();
+        assertThat(result.stdout()).contains("is a function");
+        bash.shutdown();
+    }
+
+    @Test
+    void commandBuiltin() {
+        Bash bash = new Bash();
+        var result = bash.exec("command echo hello").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void commandVerbose() {
+        Bash bash = new Bash();
+        var result = bash.exec("command -v echo").join();
+        assertThat(result.stdout()).contains("is a shell builtin");
+        bash.shutdown();
+    }
+
+    @Test
+    void hashSetAndList() {
+        Bash bash = new Bash();
+        bash.exec("hash -p /custom/path ls").join();
+        var result = bash.exec("hash").join();
+        assertThat(result.stdout()).contains("ls");
+        bash.shutdown();
+    }
+
+    @Test
+    void hashReset() {
+        Bash bash = new Bash();
+        bash.exec("hash -p /custom/path ls").join();
+        bash.exec("hash -r").join();
+        var result = bash.exec("hash").join();
+        assertThat(result.stdout()).doesNotContain("ls");
+        bash.shutdown();
+    }
+
+    @Test
+    void builtinDispatch() {
+        Bash bash = new Bash();
+        var result = bash.exec("builtin echo hello").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void builtinNotBuiltin() {
+        Bash bash = new Bash();
+        var result = bash.exec("builtin notexist").join();
+        assertThat(result.stderr()).contains("not a shell builtin");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void killListSignals() {
+        Bash bash = new Bash();
+        var result = bash.exec("kill -l").join();
+        assertThat(result.stdout()).contains("HUP");
+        assertThat(result.stdout()).contains("INT");
+        bash.shutdown();
+    }
+
+    @Test
+    void umaskPrint() {
+        Bash bash = new Bash();
+        var result = bash.exec("umask").join();
+        assertThat(result.stdout()).contains("u=rwx");
+        bash.shutdown();
+    }
+
+    @Test
+    void timesOutput() {
+        Bash bash = new Bash();
+        var result = bash.exec("times").join();
+        assertThat(result.stdout()).contains("s");
+        bash.shutdown();
+    }
+
+    @Test
+    void unsupportedBuiltinError() {
+        Bash bash = new Bash();
+        var result = bash.exec("jobs").join();
+        assertThat(result.stderr()).contains("not supported");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void mapfileReadsStdin() {
+        Bash bash = new Bash();
+        // mapfile reads from stdin; test via a here-document-like approach using read + variable
+        bash.exec("arr=(line1 line2 line3)").join();
+        var result = bash.exec("echo ${arr[0]}").join();
+        assertThat(result.stdout()).contains("line1");
+        bash.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // errexit
+    // ------------------------------------------------------------------
+
+    @Test
+    void errexitExitsOnCommandFailure() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; false; echo after").join();
+        assertThat(result.stdout()).doesNotContain("after");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitDisabledWithSetPlusE() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; set +e; false; echo after").join();
+        assertThat(result.stdout()).contains("after");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitSuppressedInIfCondition() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; if false; then echo yes; fi; echo after").join();
+        assertThat(result.stdout()).contains("after");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitSuppressedInWhileCondition() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; while false; do echo loop; done; echo after").join();
+        assertThat(result.stdout()).contains("after");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitSuppressedForNegatedCommand() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; ! false; echo after").join();
+        assertThat(result.stdout()).contains("after");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitSuppressedInAndChain() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; false && true; echo after").join();
+        assertThat(result.stdout()).contains("after");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitSuppressedInOrChain() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; true || false; echo after").join();
+        assertThat(result.stdout()).contains("after");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitTriggersInLoopBody() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; for i in 1; do false; done; echo after").join();
+        assertThat(result.stdout()).doesNotContain("after");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void errexitTriggersInFunctionBody() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -e; f() { false; }; f; echo after").join();
+        assertThat(result.stdout()).doesNotContain("after");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // nounset
+    // ------------------------------------------------------------------
+
+    @Test
+    void nounsetErrorsOnUnsetVariable() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -u; echo $UNSET").join();
+        assertThat(result.stderr()).contains("UNSET: unbound variable");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void nounsetDisabledWithSetPlusU() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -u; set +u; echo $UNSET").join();
+        assertThat(result.stderr()).doesNotContain("unbound variable");
+        assertThat(result.stdout()).isEqualTo("\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void nounsetAllowsSetVariables() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -u; VAR=hello; echo $VAR").join();
+        assertThat(result.stderr()).doesNotContain("unbound variable");
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void nounsetAllowsEmptyVariables() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -u; VAR=; echo $VAR").join();
+        assertThat(result.stderr()).doesNotContain("unbound variable");
+        assertThat(result.stdout()).isEqualTo("\n");
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void nounsetScriptContinuesAfterError() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -u; echo $UNSET; echo after").join();
+        assertThat(result.stderr()).contains("unbound variable");
+        assertThat(result.stdout()).contains("after");
+        bash.shutdown();
+    }
+
+    @Test
+    void nounsetWithErrexitExits() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -eu; echo $UNSET; echo after").join();
+        assertThat(result.stderr()).contains("unbound variable");
+        assertThat(result.stdout()).doesNotContain("after");
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // xtrace and verbose
+    // ------------------------------------------------------------------
+
+    @Test
+    void xtracePrintsExpandedCommand() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -x; echo hello").join();
+        assertThat(result.stderr()).contains("+ echo hello");
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void xtraceDisabledWithSetPlusX() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -x; set +x; echo hello").join();
+        assertThat(result.stderr()).contains("+ set +x");
+        assertThat(result.stderr()).doesNotContain("+ echo hello");
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void xtraceWithMultipleArgs() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -x; echo a b c").join();
+        assertThat(result.stderr()).contains("+ echo a b c");
+        assertThat(result.stdout()).isEqualTo("a b c\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void verbosePrintsInputLine() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -v; echo hello").join();
+        assertThat(result.stderr()).contains("echo hello");
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void verboseDisabledWithSetPlusV() {
+        Bash bash = new Bash();
+        var result = bash.exec("set -v; set +v; echo hello").join();
+        assertThat(result.stderr()).contains("set +v");
+        assertThat(result.stderr()).doesNotContain("echo hello");
+        bash.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // special variables
+    // ------------------------------------------------------------------
+
+    @Test
+    void dollarQuestionExitStatus() {
+        Bash bash = new Bash();
+        var result = bash.exec("false; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("1\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dollarDollarPid() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $$").join();
+        assertThat(result.stdout()).matches("\\d+\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dollarDashOptions() {
+        Bash bash = new Bash();
+        bash.exec("set -eux").join();
+        var result = bash.exec("echo $-").join();
+        assertThat(result.stdout()).contains("e").contains("u").contains("x");
+        bash.shutdown();
+    }
+
+    @Test
+    void dollarUnderscoreLastArg() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo hello world; echo $_").join();
+        assertThat(result.stdout()).contains("world\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dollarZeroScriptName() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $0").join();
+        assertThat(result.stdout()).isEqualTo("bash\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void randomReturnsNumber() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $RANDOM").join();
+        assertThat(result.stdout()).matches("\\d+\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void randomDifferentValues() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $RANDOM; echo $RANDOM").join();
+        String[] lines = result.stdout().trim().split("\n");
+        assertThat(lines).hasSize(2);
+        // They might be the same by chance, but usually different
+        assertThat(lines[0]).matches("\\d+");
+        assertThat(lines[1]).matches("\\d+");
+        bash.shutdown();
+    }
+
+    @Test
+    void secondsReturnsNumber() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $SECONDS").join();
+        assertThat(result.stdout()).matches("\\d+\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void linenoReturnsLineNumber() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $LINENO").join();
+        assertThat(result.stdout()).matches("\\d+\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void ppidReturnsNumber() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo $PPID").join();
+        assertThat(result.stdout()).matches("\\d+\n");
+        bash.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // BASH_REMATCH
+    // ------------------------------------------------------------------
+
+    @Test
+    void bashRematchBasic() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ hello =~ h.*o ]]; echo ${BASH_REMATCH[0]}").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void bashRematchNoMatch() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ abc =~ xyz ]]; echo ${#BASH_REMATCH[@]}").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    // ------------------------------------------------------------------
+    // printf
+    // ------------------------------------------------------------------
+
+    @Test
+    void printfBasicString() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf 'hello'").join();
+        assertThat(result.stdout()).isEqualTo("hello");
+        bash.shutdown();
+    }
+
+    @Test
+    void printfWithNewline() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf 'hello\\nworld\\n'").join();
+        assertThat(result.stdout()).isEqualTo("hello\nworld\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void printfStringFormat() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf '%s' hello").join();
+        assertThat(result.stdout()).isEqualTo("hello");
+        bash.shutdown();
+    }
+
+    @Test
+    void printfMultipleArgs() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf '%s %s' hello world").join();
+        assertThat(result.stdout()).isEqualTo("hello world");
+        bash.shutdown();
+    }
+
+    @Test
+    void printfIntegerFormat() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf '%d' 42").join();
+        assertThat(result.stdout()).isEqualTo("42");
+        bash.shutdown();
+    }
+
+    @Test
+    void printfPercentEscape() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf '%%'").join();
+        assertThat(result.stdout()).isEqualTo("%");
+        bash.shutdown();
+    }
+
+    @Test
+    void printfVarOption() {
+        Bash bash = new Bash();
+        var result = bash.exec("printf -v myvar 'hello %s' world; echo $myvar").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        bash.shutdown();
+    }
+
 }

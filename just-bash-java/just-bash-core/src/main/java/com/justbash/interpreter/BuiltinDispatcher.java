@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 public class BuiltinDispatcher {
@@ -61,6 +62,20 @@ public class BuiltinDispatcher {
             case "let" -> Optional.of(handleLet(args, state));
             case "getopts" -> Optional.of(handleGetopts(args, state));
             case "trap" -> Optional.of(handleTrap(args, state));
+            case "kill" -> Optional.of(handleKill(args, state));
+            case "umask" -> Optional.of(handleUmask(args, state));
+            case "times" -> Optional.of(handleTimes(args, state));
+            case "history" -> Optional.of(handleHistory(args, state));
+            case "type" -> Optional.of(handleType(args, state));
+            case "command" -> Optional.of(handleCommand(args, state));
+            case "hash" -> Optional.of(handleHash(args, state));
+            case "builtin" -> Optional.of(handleBuiltin(args, state));
+            case "mapfile", "readarray" -> Optional.of(handleMapfile(args, state));
+            case "printf" -> Optional.of(handlePrintf(args, state));
+            case "jobs", "fg", "bg", "ulimit", "logout", "caller",
+                 "suspend", "disown", "enable", "bind", "wait",
+                 "compgen", "complete", "compopt", "help" ->
+                Optional.of(new ExecResult("", "bash: " + name + ": not supported in this environment\n", 1));
             default -> Optional.empty();
         };
     }
@@ -1338,5 +1353,546 @@ public class BuiltinDispatcher {
             case "15", "TERM" -> "SIGTERM";
             default -> s.toUpperCase();
         };
+    }
+
+    private ExecResult handleKill(List<String> args, InterpreterState state) {
+        boolean listSignals = false;
+        String signal = "TERM";
+        List<String> pids = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-l") || arg.equals("-L")) {
+                listSignals = true;
+            } else if (arg.startsWith("-")) {
+                signal = arg.substring(1);
+            } else {
+                pids.add(arg);
+            }
+        }
+
+        if (listSignals) {
+            return new ExecResult(
+                "HUP INT QUIT ILL TRAP ABRT BUS FPE KILL USR1 SEGV USR2 PIPE ALRM TERM STKFLT CHLD CONT STOP TSTP TTIN TTOU URG XCPU XFSZ VTALRM PROF WINCH POLL PWR SYS\n",
+                "", 0);
+        }
+
+        if (pids.isEmpty()) {
+            return new ExecResult("", "bash: kill: usage: kill [-s sigspec | -n signum | -sigspec] pid | jobspec ... or kill -l [sigspec]\n", 2);
+        }
+
+        // In the sandboxed environment, we just pretend to send signals
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handleUmask(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            // Print current umask in symbolic form
+            return new ExecResult("u=rwx,g=rx,o=rx\n", "", 0);
+        }
+
+        String arg = args.get(0);
+        if (arg.equals("-S")) {
+            if (args.size() > 1) {
+                // Set new umask symbolically - just accept for MVP
+                return new ExecResult("", "", 0);
+            }
+            return new ExecResult("u=rwx,g=rx,o=rx\n", "", 0);
+        }
+
+        if (arg.startsWith("-")) {
+            return new ExecResult("", "bash: umask: " + arg + ": invalid option\n", 2);
+        }
+
+        // Set numeric umask - just accept for MVP
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handleTimes(List<String> args, InterpreterState state) {
+        long now = System.currentTimeMillis() - state.startTime;
+        double user = now / 1000.0;
+        double sys = now / 10000.0;
+        double childUser = user * 0.1;
+        double childSys = sys * 0.1;
+        String output = String.format("%.3fs %.3fs\n%.3fs %.3fs\n", user, sys, childUser, childSys);
+        return new ExecResult(output, "", 0);
+    }
+
+    private ExecResult handleHistory(List<String> args, InterpreterState state) {
+        // MVP: no persistent history
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handleType(List<String> args, InterpreterState state) {
+        boolean allFlag = false;
+        boolean pathFlag = false;
+        boolean typeFlag = false;
+        List<String> names = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-a")) {
+                allFlag = true;
+            } else if (arg.equals("-p")) {
+                pathFlag = true;
+            } else if (arg.equals("-t")) {
+                typeFlag = true;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                return new ExecResult("", "bash: type: " + arg + ": invalid option\n", 2);
+            } else {
+                names.add(arg);
+            }
+        }
+
+        if (names.isEmpty()) {
+            return new ExecResult("", "", 0);
+        }
+
+        StringBuilder stdout = new StringBuilder();
+        StringBuilder stderr = new StringBuilder();
+        int exitCode = 0;
+
+        for (String name : names) {
+            String classification = classifyCommand(name, state);
+
+            if (typeFlag) {
+                if (classification.equals("builtin")) {
+                    stdout.append("builtin\n");
+                } else if (classification.equals("alias")) {
+                    stdout.append("alias\n");
+                } else if (classification.equals("function")) {
+                    stdout.append("function\n");
+                } else if (classification.equals("keyword")) {
+                    stdout.append("keyword\n");
+                } else {
+                    stdout.append("file\n");
+                }
+            } else if (pathFlag) {
+                if (classification.equals("file")) {
+                    stdout.append("/usr/bin/").append(name).append("\n");
+                }
+            } else {
+                if (classification.equals("builtin")) {
+                    stdout.append(name).append(" is a shell builtin\n");
+                } else if (classification.equals("alias")) {
+                    String aliasValue = state.aliases.get(name);
+                    stdout.append(name).append(" is aliased to '").append(aliasValue).append("'\n");
+                } else if (classification.equals("function")) {
+                    stdout.append(name).append(" is a function\n");
+                } else if (classification.equals("keyword")) {
+                    stdout.append(name).append(" is a shell keyword\n");
+                } else {
+                    stdout.append(name).append(" is /usr/bin/").append(name).append("\n");
+                }
+            }
+        }
+
+        return new ExecResult(stdout.toString(), stderr.toString(), exitCode);
+    }
+
+    private String classifyCommand(String name, InterpreterState state) {
+        if (state.aliases.containsKey(name)) return "alias";
+        if (isKeyword(name)) return "keyword";
+        if (state.functions.containsKey(name)) return "function";
+        if (isBuiltin(name)) return "builtin";
+        return "file";
+    }
+
+    private boolean isKeyword(String name) {
+        return Set.of("if", "then", "else", "elif", "fi", "case", "esac", "for",
+            "while", "until", "do", "done", "in", "function", "time", "select",
+            "coproc").contains(name);
+    }
+
+    private boolean isBuiltin(String name) {
+        return new CommandResolver().isBuiltin(name);
+    }
+
+    private ExecResult handleCommand(List<String> args, InterpreterState state) {
+        boolean bypassFunctions = true;
+        boolean searchPath = false;
+        boolean verbose = false;
+        List<String> rest = new ArrayList<>();
+
+        int i = 0;
+        while (i < args.size()) {
+            String arg = args.get(i);
+            if (arg.equals("-p")) {
+                searchPath = true;
+                i++;
+            } else if (arg.equals("-v")) {
+                verbose = true;
+                i++;
+            } else if (arg.equals("-V")) {
+                verbose = true;
+                i++;
+            } else if (arg.equals("--")) {
+                i++;
+                break;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                return new ExecResult("", "bash: command: " + arg + ": invalid option\n", 2);
+            } else {
+                break;
+            }
+        }
+
+        rest.addAll(args.subList(i, args.size()));
+
+        if (rest.isEmpty()) {
+            return new ExecResult("", "", 0);
+        }
+
+        String cmdName = rest.get(0);
+        List<String> cmdArgs = rest.subList(1, rest.size());
+
+        if (verbose) {
+            String classification = classifyCommand(cmdName, state);
+            StringBuilder sb = new StringBuilder();
+            if (classification.equals("builtin")) {
+                sb.append(cmdName).append(" is a shell builtin\n");
+            } else if (classification.equals("alias")) {
+                sb.append(cmdName).append(" is aliased to '").append(state.aliases.get(cmdName)).append("'\n");
+            } else if (classification.equals("function")) {
+                sb.append(cmdName).append(" is a function\n");
+            } else if (classification.equals("keyword")) {
+                sb.append(cmdName).append(" is a shell keyword\n");
+            } else {
+                sb.append(cmdName).append(" is hashed (/usr/bin/").append(cmdName).append(")\n");
+            }
+            return new ExecResult(sb.toString(), "", 0);
+        }
+
+        // Execute the command, bypassing functions if requested
+        if (bypassFunctions) {
+            var builtinResult = dispatch(cmdName, cmdArgs, state);
+            if (builtinResult.isPresent()) {
+                return builtinResult.get();
+            }
+        }
+
+        // Fall through to normal dispatch
+        return dispatch(cmdName, cmdArgs, state)
+            .orElse(new ExecResult("", "bash: " + cmdName + ": command not found\n", 127));
+    }
+
+    private ExecResult handleHash(List<String> args, InterpreterState state) {
+        boolean listFlag = false;
+        boolean removeFlag = false;
+        boolean resetFlag = false;
+        String pathname = null;
+        List<String> names = new ArrayList<>();
+
+        int i = 0;
+        while (i < args.size()) {
+            String arg = args.get(i);
+            if (arg.equals("-r")) {
+                resetFlag = true;
+            } else if (arg.equals("-l")) {
+                listFlag = true;
+            } else if (arg.equals("-p")) {
+                i++;
+                if (i >= args.size()) {
+                    return new ExecResult("", "bash: hash: -p: option requires an argument\n", 2);
+                }
+                pathname = args.get(i);
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                return new ExecResult("", "bash: hash: " + arg + ": invalid option\n", 2);
+            } else {
+                names.add(arg);
+            }
+            i++;
+        }
+
+        if (resetFlag) {
+            state.hashTable.clear();
+            return new ExecResult("", "", 0);
+        }
+
+        if (pathname != null) {
+            for (String name : names) {
+                state.hashTable.put(name, pathname);
+            }
+            return new ExecResult("", "", 0);
+        }
+
+        if (listFlag) {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, String> entry : state.hashTable.entrySet()) {
+                sb.append("builtin hash -p ").append(entry.getValue())
+                  .append(" ").append(entry.getKey()).append("\n");
+            }
+            return new ExecResult(sb.toString(), "", 0);
+        }
+
+        if (names.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            for (Map.Entry<String, String> entry : state.hashTable.entrySet()) {
+                sb.append(entry.getKey()).append("\t").append(entry.getValue()).append("\n");
+            }
+            return new ExecResult(sb.toString(), "", 0);
+        }
+
+        StringBuilder stderr = new StringBuilder();
+        int exitCode = 0;
+        for (String name : names) {
+            // For MVP, just pretend to hash all commands
+            state.hashTable.putIfAbsent(name, "/usr/bin/" + name);
+        }
+        return new ExecResult("", stderr.toString(), exitCode);
+    }
+
+    private ExecResult handleBuiltin(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            return new ExecResult("", "bash: builtin: usage: builtin [shell-builtin [arg ...]]\n", 1);
+        }
+        String cmdName = args.get(0);
+        List<String> cmdArgs = args.subList(1, args.size());
+        return dispatch(cmdName, cmdArgs, state)
+            .orElse(new ExecResult("", "bash: " + cmdName + ": not a shell builtin\n", 1));
+    }
+
+    private ExecResult handleMapfile(List<String> args, InterpreterState state) {
+        String arrayName = "MAPFILE";
+        String delimiter = "\n";
+        int count = -1;
+        int offset = 0;
+        boolean removeTrailing = false;
+        int skip = 0;
+        List<String> input = new ArrayList<>();
+
+        int i = 0;
+        while (i < args.size()) {
+            String arg = args.get(i);
+            if (arg.equals("-t")) {
+                removeTrailing = true;
+                i++;
+            } else if (arg.equals("-d")) {
+                i++;
+                if (i >= args.size()) {
+                    return new ExecResult("", "bash: mapfile: -d: option requires an argument\n", 2);
+                }
+                delimiter = args.get(i);
+                i++;
+            } else if (arg.equals("-n")) {
+                i++;
+                if (i >= args.size()) {
+                    return new ExecResult("", "bash: mapfile: -n: option requires an argument\n", 2);
+                }
+                try {
+                    count = Integer.parseInt(args.get(i));
+                } catch (NumberFormatException e) {
+                    return new ExecResult("", "bash: mapfile: " + args.get(i) + ": invalid count\n", 1);
+                }
+                i++;
+            } else if (arg.equals("-O")) {
+                i++;
+                if (i >= args.size()) {
+                    return new ExecResult("", "bash: mapfile: -O: option requires an argument\n", 2);
+                }
+                try {
+                    offset = Integer.parseInt(args.get(i));
+                } catch (NumberFormatException e) {
+                    return new ExecResult("", "bash: mapfile: " + args.get(i) + ": invalid offset\n", 1);
+                }
+                i++;
+            } else if (arg.equals("-s")) {
+                i++;
+                if (i >= args.size()) {
+                    return new ExecResult("", "bash: mapfile: -s: option requires an argument\n", 2);
+                }
+                try {
+                    skip = Integer.parseInt(args.get(i));
+                } catch (NumberFormatException e) {
+                    return new ExecResult("", "bash: mapfile: " + args.get(i) + ": invalid skip count\n", 1);
+                }
+                i++;
+            } else if (arg.equals("-u")) {
+                i++;
+                if (i >= args.size()) {
+                    return new ExecResult("", "bash: mapfile: -u: option requires an argument\n", 2);
+                }
+                i++; // ignore fd for MVP
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                return new ExecResult("", "bash: mapfile: " + arg + ": invalid option\n", 2);
+            } else {
+                arrayName = arg;
+                i++;
+            }
+        }
+
+        // Read from stdin (groupStdin)
+        String stdin = state.groupStdin;
+        if (stdin != null && !stdin.isEmpty()) {
+            if (delimiter.isEmpty()) {
+                // Read everything as a single element
+                input.add(stdin);
+            } else {
+                String[] lines = stdin.split(Pattern.quote(delimiter), -1);
+                for (String line : lines) {
+                    input.add(line);
+                }
+            }
+        }
+
+        if (removeTrailing && !input.isEmpty()) {
+            String last = input.getLast();
+            if (last.endsWith("\n")) {
+                input.set(input.size() - 1, last.substring(0, last.length() - 1));
+            }
+        }
+
+        // Skip lines
+        int startIdx = Math.min(skip, input.size());
+        List<String> effective = input.subList(startIdx, input.size());
+
+        // Limit count
+        if (count >= 0) {
+            int end = Math.min(count, effective.size());
+            effective = effective.subList(0, end);
+        }
+
+        // Store in array
+        List<String> arr = new ArrayList<>();
+        for (int j = 0; j < offset; j++) {
+            arr.add("");
+        }
+        arr.addAll(effective);
+        state.indexedArrays.put(arrayName, arr);
+
+        return new ExecResult("", "", 0);
+    }
+
+    private ExecResult handlePrintf(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            return new ExecResult("", "bash: printf: usage: printf format [arguments]\n", 2);
+        }
+
+        int idx = 0;
+        String varName = null;
+        if (args.get(0).equals("-v")) {
+            if (args.size() < 2) {
+                return new ExecResult("", "bash: printf: -v: option requires an argument\n", 2);
+            }
+            varName = args.get(1);
+            idx = 2;
+        }
+
+        if (idx >= args.size()) {
+            return new ExecResult("", "bash: printf: usage: printf format [arguments]\n", 2);
+        }
+
+        String format = args.get(idx);
+        List<String> formatArgs = args.subList(idx + 1, args.size());
+
+        String output = formatPrintf(format, formatArgs);
+
+        if (varName != null) {
+            state.env.put(varName, output);
+        } else {
+            return new ExecResult(output, "", 0);
+        }
+        return new ExecResult("", "", 0);
+    }
+
+    private String formatPrintf(String format, List<String> args) {
+        StringBuilder result = new StringBuilder();
+        int argIdx = 0;
+        for (int i = 0; i < format.length(); i++) {
+            char c = format.charAt(i);
+            if (c == '\\' && i + 1 < format.length()) {
+                char next = format.charAt(i + 1);
+                result.append(switch (next) {
+                    case 'n' -> '\n';
+                    case 't' -> '\t';
+                    case 'r' -> '\r';
+                    case '\\' -> '\\';
+                    case 'a' -> '';
+                    case 'b' -> '\b';
+                    case 'v' -> '';
+                    case 'f' -> '';
+                    case '"' -> '"';
+                    case '\'' -> '\'';
+                    case '0' -> ' ';
+                    default -> next;
+                });
+                i++;
+            } else if (c == '%' && i + 1 < format.length()) {
+                char spec = format.charAt(i + 1);
+                if (spec == '%') {
+                    result.append('%');
+                    i++;
+                } else if (argIdx < args.size()) {
+                    String arg = args.get(argIdx++);
+                    result.append(switch (spec) {
+                        case 's' -> arg;
+                        case 'd', 'i' -> formatInt(arg, 10);
+                        case 'u' -> formatUnsignedInt(arg);
+                        case 'f' -> formatFloat(arg);
+                        case 'e' -> formatScientific(arg, 'e');
+                        case 'E' -> formatScientific(arg, 'E');
+                        case 'g', 'G' -> formatFloat(arg);
+                        case 'c' -> arg.isEmpty() ? "" : arg.substring(0, 1);
+                        case 'x' -> formatHex(arg, false);
+                        case 'X' -> formatHex(arg, true);
+                        case 'o' -> formatOctal(arg);
+                        default -> "%" + spec;
+                    });
+                    i++;
+                } else {
+                    result.append('%').append(spec);
+                    i++;
+                }
+            } else {
+                result.append(c);
+            }
+        }
+        return result.toString();
+    }
+
+    private String formatInt(String arg, int radix) {
+        try {
+            return String.valueOf(Long.parseLong(arg.trim()));
+        } catch (NumberFormatException e) {
+            return "0";
+        }
+    }
+
+    private String formatUnsignedInt(String arg) {
+        try {
+            return Long.toUnsignedString(Long.parseLong(arg.trim()));
+        } catch (NumberFormatException e) {
+            return "0";
+        }
+    }
+
+    private String formatFloat(String arg) {
+        try {
+            return String.valueOf(Double.parseDouble(arg.trim()));
+        } catch (NumberFormatException e) {
+            return "0";
+        }
+    }
+
+    private String formatScientific(String arg, char e) {
+        try {
+            return String.format(java.util.Locale.US, "%" + e, Double.parseDouble(arg.trim()));
+        } catch (NumberFormatException e2) {
+            return "0";
+        }
+    }
+
+    private String formatHex(String arg, boolean upper) {
+        try {
+            long val = Long.parseLong(arg.trim());
+            return upper ? Long.toHexString(val).toUpperCase() : Long.toHexString(val);
+        } catch (NumberFormatException e) {
+            return "0";
+        }
+    }
+
+    private String formatOctal(String arg) {
+        try {
+            return Long.toOctalString(Long.parseLong(arg.trim()));
+        } catch (NumberFormatException e) {
+            return "0";
+        }
     }
 }
