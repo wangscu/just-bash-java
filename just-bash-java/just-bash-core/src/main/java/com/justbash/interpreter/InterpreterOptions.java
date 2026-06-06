@@ -5,6 +5,7 @@ import com.justbash.Command;
 import com.justbash.ExecOptions;
 import com.justbash.TraceEvent;
 import com.justbash.fs.IFileSystem;
+import com.justbash.network.SecureHttpClient;
 import com.justbash.security.ExecutionLimits;
 import java.util.Map;
 import java.util.Optional;
@@ -18,6 +19,7 @@ public class InterpreterOptions {
     private final Map<String, Command> commands;
     private final ExecutionLimits limits;
     private final BiFunction<String, ExecOptions, CompletableFuture<BashExecResult>> exec;
+    private final Optional<SecureHttpClient> secureHttpClient;
 
     private Optional<Consumer<TraceEvent>> trace = Optional.empty();
     private Optional<Function<Long, CompletableFuture<Void>>> sleep = Optional.empty();
@@ -30,10 +32,20 @@ public class InterpreterOptions {
             Map<String, Command> commands,
             ExecutionLimits limits,
             BiFunction<String, ExecOptions, CompletableFuture<BashExecResult>> exec) {
+        this(fs, commands, limits, exec, Optional.empty());
+    }
+
+    public InterpreterOptions(
+            IFileSystem fs,
+            Map<String, Command> commands,
+            ExecutionLimits limits,
+            BiFunction<String, ExecOptions, CompletableFuture<BashExecResult>> exec,
+            Optional<SecureHttpClient> secureHttpClient) {
         this.fs = fs;
         this.commands = commands;
         this.limits = limits;
         this.exec = exec;
+        this.secureHttpClient = secureHttpClient;
     }
 
     public InterpreterOptions withTrace(Consumer<TraceEvent> trace) {
@@ -95,5 +107,9 @@ public class InterpreterOptions {
 
     public Optional<BiFunction<String, String, CompletableFuture<String>>> invokeTool() {
         return invokeTool;
+    }
+
+    public Optional<SecureHttpClient> secureHttpClient() {
+        return secureHttpClient;
     }
 }

@@ -9,6 +9,7 @@ import com.justbash.interpreter.errors.ContinueException;
 import com.justbash.interpreter.errors.ExitException;
 import com.justbash.interpreter.errors.ParseException;
 import com.justbash.interpreter.errors.ReturnException;
+import com.justbash.parser.ArithmeticParser;
 import com.justbash.parser.Parser;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -51,6 +52,15 @@ public class BuiltinDispatcher {
             case "[" -> Optional.of(handleTest(args, state, true));
             case "set" -> Optional.of(handleSet(args, state));
             case "shopt" -> Optional.of(handleShopt(args, state));
+            case "alias" -> Optional.of(handleAlias(args, state));
+            case "unalias" -> Optional.of(handleUnalias(args, state));
+            case "readonly" -> Optional.of(handleReadonly(args, state));
+            case "pushd" -> Optional.of(handlePushd(args, state));
+            case "popd" -> Optional.of(handlePopd(args, state));
+            case "dirs" -> Optional.of(handleDirs(args, state));
+            case "let" -> Optional.of(handleLet(args, state));
+            case "getopts" -> Optional.of(handleGetopts(args, state));
+            case "trap" -> Optional.of(handleTrap(args, state));
             default -> Optional.empty();
         };
     }
@@ -842,5 +852,491 @@ public class BuiltinDispatcher {
         }
 
         return new ExecResult("", "", 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Alias / Unalias
+    // ------------------------------------------------------------------
+
+    private ExecResult handleAlias(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            // Print all aliases
+            StringBuilder stdout = new StringBuilder();
+            List<String> sorted = new ArrayList<>(state.aliases.keySet());
+            Collections.sort(sorted);
+            for (String name : sorted) {
+                String value = state.aliases.get(name);
+                stdout.append("alias ").append(name).append("='").append(value).append("'\n");
+            }
+            return new ExecResult(stdout.toString(), "", 0);
+        }
+
+        StringBuilder stderr = new StringBuilder();
+        int exitCode = 0;
+
+        for (String arg : args) {
+            if (arg.equals("-p")) {
+                // Print all aliases in reusable format
+                StringBuilder stdout = new StringBuilder();
+                List<String> sorted = new ArrayList<>(state.aliases.keySet());
+                Collections.sort(sorted);
+                for (String name : sorted) {
+                    String value = state.aliases.get(name);
+                    stdout.append("alias ").append(name).append("='").append(value).append("'\n");
+                }
+                return new ExecResult(stdout.toString(), "", 0);
+            }
+
+            int eqIdx = arg.indexOf('=');
+            if (eqIdx >= 0) {
+                String name = arg.substring(0, eqIdx);
+                String value = arg.substring(eqIdx + 1);
+                // Remove surrounding quotes if present
+                if ((value.startsWith("'") && value.endsWith("'"))
+                    || (value.startsWith("\"") && value.endsWith("\""))) {
+                    value = value.substring(1, value.length() - 1);
+                }
+                state.aliases.put(name, value);
+            } else {
+                String value = state.aliases.get(arg);
+                if (value != null) {
+                    return new ExecResult("alias " + arg + "='" + value + "'\n", "", 0);
+                } else {
+                    stderr.append("bash: alias: ").append(arg).append(": not found\n");
+                    exitCode = 1;
+                }
+            }
+        }
+
+        return new ExecResult("", stderr.toString(), exitCode);
+    }
+
+    private ExecResult handleUnalias(List<String> args, InterpreterState state) {
+        boolean all = false;
+        List<String> names = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-a")) {
+                all = true;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                return new ExecResult("", "bash: unalias: " + arg + ": invalid option\n", 2);
+            } else {
+                names.add(arg);
+            }
+        }
+
+        if (all) {
+            state.aliases.clear();
+            return new ExecResult("", "", 0);
+        }
+
+        StringBuilder stderr = new StringBuilder();
+        int exitCode = 0;
+        for (String name : names) {
+            if (state.aliases.remove(name) == null) {
+                stderr.append("bash: unalias: ").append(name).append(": not found\n");
+                exitCode = 1;
+            }
+        }
+        return new ExecResult("", stderr.toString(), exitCode);
+    }
+
+    private ExecResult handleReadonly(List<String> args, InterpreterState state) {
+        boolean printFlag = false;
+        List<String> processed = new ArrayList<>();
+
+        for (String arg : args) {
+            if (arg.equals("-p")) {
+                printFlag = true;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                // readonly accepts -a, -A, -f, -i, -t, -x but for MVP we just track -p
+                // Ignore other flags
+            } else {
+                processed.add(arg);
+            }
+        }
+
+        if (processed.isEmpty() || printFlag) {
+            // Print all readonly variables
+            StringBuilder stdout = new StringBuilder();
+            List<String> sorted = new ArrayList<>(state.readonlyVars);
+            Collections.sort(sorted);
+            for (String name : sorted) {
+                String value = state.env.getOrDefault(name, "");
+                stdout.append("declare -r ").append(name).append("=\"").append(value).append("\"\n");
+            }
+            return new ExecResult(stdout.toString(), "", 0);
+        }
+
+        StringBuilder stderr = new StringBuilder();
+        int exitCode = 0;
+
+        for (String arg : processed) {
+            String name;
+            String value;
+            if (arg.contains("=")) {
+                int idx = arg.indexOf("=");
+                name = arg.substring(0, idx);
+                value = arg.substring(idx + 1);
+            } else {
+                name = arg;
+                value = state.env.get(name);
+            }
+
+            if (value != null) {
+                state.env.put(name, value);
+            }
+            state.readonlyVars.add(name);
+        }
+
+        return new ExecResult("", stderr.toString(), exitCode);
+    }
+
+    private ExecResult handlePushd(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            // Swap current directory with top of stack
+            if (state.directoryStack.isEmpty()) {
+                return new ExecResult("", "bash: pushd: no other directory\n", 1);
+            }
+            String top = state.directoryStack.get(0);
+            state.directoryStack.set(0, state.cwd);
+            state.cwd = top;
+            return new ExecResult(buildDirsOutput(state), "", 0);
+        }
+
+        String dir = args.get(0);
+        if (dir.startsWith("+")) {
+            // Rotate: bring Nth directory to top
+            try {
+                int n = Integer.parseInt(dir.substring(1));
+                if (n < 0 || n >= state.directoryStack.size()) {
+                    return new ExecResult("", "bash: pushd: " + dir + ": invalid argument\n", 1);
+                }
+                String target = state.directoryStack.remove(n);
+                state.directoryStack.add(0, target);
+                state.cwd = target;
+                return new ExecResult(buildDirsOutput(state), "", 0);
+            } catch (NumberFormatException e) {
+                return new ExecResult("", "bash: pushd: " + dir + ": invalid argument\n", 1);
+            }
+        }
+
+        // Resolve and change directory
+        String resolved = resolveCdPath(dir, state);
+        if (resolved == null) {
+            return new ExecResult("", "bash: pushd: " + dir + ": No such file or directory\n", 1);
+        }
+        state.directoryStack.add(0, state.cwd);
+        state.cwd = resolved;
+        return new ExecResult(buildDirsOutput(state), "", 0);
+    }
+
+    private ExecResult handlePopd(List<String> args, InterpreterState state) {
+        if (state.directoryStack.isEmpty()) {
+            return new ExecResult("", "bash: popd: directory stack empty\n", 1);
+        }
+
+        if (!args.isEmpty() && args.get(0).startsWith("+")) {
+            try {
+                int n = Integer.parseInt(args.get(0).substring(1));
+                if (n < 0 || n >= state.directoryStack.size()) {
+                    return new ExecResult("", "bash: popd: " + args.get(0) + ": invalid argument\n", 1);
+                }
+                state.directoryStack.remove(n);
+                return new ExecResult(buildDirsOutput(state), "", 0);
+            } catch (NumberFormatException e) {
+                return new ExecResult("", "bash: popd: " + args.get(0) + ": invalid argument\n", 1);
+            }
+        }
+
+        String target = state.directoryStack.remove(0);
+        state.cwd = target;
+        return new ExecResult(buildDirsOutput(state), "", 0);
+    }
+
+    private ExecResult handleDirs(List<String> args, InterpreterState state) {
+        boolean clearFlag = false;
+        boolean verboseFlag = false;
+        boolean longFlag = false; // -l: print tilde-expanded
+        int n = -1;
+
+        for (String arg : args) {
+            if (arg.equals("-c")) {
+                clearFlag = true;
+            } else if (arg.equals("-v")) {
+                verboseFlag = true;
+            } else if (arg.equals("-l")) {
+                longFlag = true;
+            } else if (arg.startsWith("+") || arg.startsWith("-")) {
+                try {
+                    n = Integer.parseInt(arg.substring(1));
+                    if (arg.startsWith("-")) {
+                        n = state.directoryStack.size() - n;
+                    }
+                } catch (NumberFormatException e) {
+                    return new ExecResult("", "bash: dirs: " + arg + ": invalid argument\n", 1);
+                }
+            }
+        }
+
+        if (clearFlag) {
+            state.directoryStack.clear();
+            return new ExecResult("", "", 0);
+        }
+
+        if (n >= 0 && n < state.directoryStack.size()) {
+            String dir = state.directoryStack.get(n);
+            if (verboseFlag) {
+                return new ExecResult(n + "  " + dir + "\n", "", 0);
+            }
+            return new ExecResult(dir + "\n", "", 0);
+        }
+
+        if (verboseFlag) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < state.directoryStack.size(); i++) {
+                sb.append(i).append("  ").append(state.directoryStack.get(i)).append("\n");
+            }
+            return new ExecResult(sb.toString(), "", 0);
+        }
+
+        return new ExecResult(buildDirsOutput(state), "", 0);
+    }
+
+    private String buildDirsOutput(InterpreterState state) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(state.cwd);
+        for (String dir : state.directoryStack) {
+            sb.append(" ").append(dir);
+        }
+        sb.append("\n");
+        return sb.toString();
+    }
+
+    private ExecResult handleLet(List<String> args, InterpreterState state) {
+        if (args.isEmpty()) {
+            return new ExecResult("", "bash: let: syntax error: operand expected\n", 1);
+        }
+
+        // Join all arguments with spaces to form a single expression
+        String exprStr = String.join(" ", args);
+
+        try {
+            var arithExpr = ArithmeticParser.parse(exprStr, 0);
+            long result = com.justbash.interpreter.ArithmeticEvaluator.evaluate(arithExpr, state);
+            return new ExecResult("", "", result == 0 ? 1 : 0);
+        } catch (Exception e) {
+            return new ExecResult("", "bash: let: syntax error\n", 1);
+        }
+    }
+
+    private ExecResult handleGetopts(List<String> args, InterpreterState state) {
+        if (args.size() < 2) {
+            return new ExecResult("", "bash: getopts: usage: getopts optstring name [arg]\n", 2);
+        }
+
+        String optstring = args.get(0);
+        String varName = args.get(1);
+        List<String> argList;
+
+        if (args.size() > 2) {
+            // Use explicit args
+            argList = new ArrayList<>(args.subList(2, args.size()));
+            state.getoptsArgList = argList;
+            state.getoptsOptind = 1;
+            state.getoptsNextCharIndex = 0;
+        } else {
+            // Use positional parameters
+            argList = new ArrayList<>();
+            int i = 1;
+            while (true) {
+                String p = state.env.get(String.valueOf(i));
+                if (p == null) break;
+                argList.add(p);
+                i++;
+            }
+            // Only reset state if argList changed or we're starting fresh
+            if (state.getoptsArgList == null || !state.getoptsArgList.equals(argList)) {
+                state.getoptsArgList = argList;
+                state.getoptsOptind = 1;
+                state.getoptsNextCharIndex = 0;
+            }
+        }
+
+        int optind = state.getoptsOptind;
+        boolean silentMode = optstring.startsWith(":");
+        if (silentMode) {
+            optstring = optstring.substring(1);
+        }
+
+        while (true) {
+            if (optind > argList.size()) {
+                // No more arguments
+                state.env.put(varName, "?");
+                state.env.remove("OPTARG");
+                state.getoptsOptind = optind;
+                return new ExecResult("", "", 1);
+            }
+
+            String currentArg = argList.get(optind - 1);
+
+            if (state.getoptsNextCharIndex == 0) {
+                // Starting a new argument
+                if (currentArg.equals("--")) {
+                    state.env.put(varName, "?");
+                    state.env.remove("OPTARG");
+                    state.getoptsOptind = optind + 1;
+                    return new ExecResult("", "", 1);
+                }
+                if (!currentArg.startsWith("-") || currentArg.length() <= 1) {
+                    // Not an option argument
+                    state.env.put(varName, "?");
+                    state.env.remove("OPTARG");
+                    state.getoptsOptind = optind;
+                    return new ExecResult("", "", 1);
+                }
+                state.getoptsNextCharIndex = 1;
+            }
+
+            char optchar = currentArg.charAt(state.getoptsNextCharIndex);
+            boolean requiresArg = optstring.indexOf(optchar) >= 0 &&
+                optstring.indexOf(optchar) + 1 < optstring.length() &&
+                optstring.charAt(optstring.indexOf(optchar) + 1) == ':';
+
+            if (optstring.indexOf(optchar) < 0) {
+                // Invalid option
+                if (silentMode) {
+                    state.env.put(varName, "?");
+                    state.env.put("OPTARG", String.valueOf(optchar));
+                } else {
+                    state.env.put(varName, "?");
+                    state.env.remove("OPTARG");
+                }
+                state.getoptsNextCharIndex++;
+                if (state.getoptsNextCharIndex >= currentArg.length()) {
+                    state.getoptsNextCharIndex = 0;
+                    optind++;
+                }
+                state.getoptsOptind = optind;
+                return new ExecResult("", "", 0);
+            }
+
+            if (requiresArg) {
+                String optarg;
+                if (state.getoptsNextCharIndex + 1 < currentArg.length()) {
+                    // Rest of current arg is the argument
+                    optarg = currentArg.substring(state.getoptsNextCharIndex + 1);
+                } else if (optind < argList.size()) {
+                    // Next arg is the argument
+                    optarg = argList.get(optind);
+                    optind++;
+                } else {
+                    // Missing required argument
+                    if (silentMode) {
+                        state.env.put(varName, ":");
+                        state.env.put("OPTARG", String.valueOf(optchar));
+                    } else {
+                        state.env.put(varName, "?");
+                        state.env.remove("OPTARG");
+                    }
+                    state.getoptsNextCharIndex = 0;
+                    optind++;
+                    state.getoptsOptind = optind;
+                    return new ExecResult("", "", 0);
+                }
+                state.env.put(varName, String.valueOf(optchar));
+                state.env.put("OPTARG", optarg);
+                state.getoptsNextCharIndex = 0;
+                optind++;
+                state.getoptsOptind = optind;
+                return new ExecResult("", "", 0);
+            }
+
+            // Simple option (no argument required)
+            state.env.put(varName, String.valueOf(optchar));
+            state.env.remove("OPTARG");
+            state.getoptsNextCharIndex++;
+            if (state.getoptsNextCharIndex >= currentArg.length()) {
+                state.getoptsNextCharIndex = 0;
+                optind++;
+            }
+            state.getoptsOptind = optind;
+            return new ExecResult("", "", 0);
+        }
+    }
+
+    private ExecResult handleTrap(List<String> args, InterpreterState state) {
+        boolean printFlag = false;
+        List<String> signals = new ArrayList<>();
+        String command = null;
+
+        for (String arg : args) {
+            if (arg.equals("-p")) {
+                printFlag = true;
+            } else if (arg.startsWith("-") && !arg.equals("-")) {
+                // Ignore other flags for MVP
+            } else {
+                if (command == null && !isSignalName(arg)) {
+                    command = arg;
+                } else {
+                    signals.add(normalizeSignal(arg));
+                }
+            }
+        }
+
+        if (command == null && signals.isEmpty() && !args.isEmpty()) {
+            // All args were signals, no command given -> treat first arg as command if quoted
+            // For MVP: if no signals parsed, re-evaluate
+            // Actually, bash syntax: trap [action] [signals...]
+            // If only one arg and it's a signal name, that means empty action for that signal
+            if (args.size() == 1 && isSignalName(args.get(0))) {
+                command = "";
+                signals.add(normalizeSignal(args.get(0)));
+            }
+        }
+
+        if (printFlag || (command == null && signals.isEmpty())) {
+            // Print all traps
+            StringBuilder stdout = new StringBuilder();
+            for (Map.Entry<String, String> entry : state.trapHandlers.entrySet()) {
+                stdout.append("trap -- '").append(entry.getValue()).append("' ").append(entry.getKey()).append("\n");
+            }
+            return new ExecResult(stdout.toString(), "", 0);
+        }
+
+        if (signals.isEmpty()) {
+            // Default to EXIT if no signal specified
+            signals.add("EXIT");
+        }
+
+        for (String signal : signals) {
+            if (command == null || command.equals("-")) {
+                state.trapHandlers.remove(signal);
+            } else {
+                state.trapHandlers.put(signal, command);
+            }
+        }
+
+        return new ExecResult("", "", 0);
+    }
+
+    private boolean isSignalName(String s) {
+        return s.equalsIgnoreCase("EXIT") || s.equalsIgnoreCase("ERR") || s.equalsIgnoreCase("DEBUG")
+            || s.equalsIgnoreCase("RETURN") || s.equals("0") || s.equals("1") || s.equals("2")
+            || s.equals("3") || s.equals("6") || s.equals("9") || s.equals("14") || s.equals("15");
+    }
+
+    private String normalizeSignal(String s) {
+        return switch (s.toUpperCase()) {
+            case "0" -> "EXIT";
+            case "1", "HUP" -> "SIGHUP";
+            case "2", "INT" -> "SIGINT";
+            case "3", "QUIT" -> "SIGQUIT";
+            case "6", "ABRT" -> "SIGABRT";
+            case "9", "KILL" -> "SIGKILL";
+            case "14", "ALRM" -> "SIGALRM";
+            case "15", "TERM" -> "SIGTERM";
+            default -> s.toUpperCase();
+        };
     }
 }

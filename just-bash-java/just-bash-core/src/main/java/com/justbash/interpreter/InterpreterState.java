@@ -93,6 +93,18 @@ public class InterpreterState {
     public record PendingProcessSub(String path, ScriptNode body) {}
     List<PendingProcessSub> pendingOutputProcessSubs;
 
+    // Aliases
+    Map<String, String> aliases;
+    Set<String> expandingAliases;
+
+    // getopts state
+    int getoptsOptind;
+    int getoptsNextCharIndex;
+    List<String> getoptsArgList;
+
+    // Traps
+    Map<String, String> trapHandlers;
+
     // Other
     Map<String, CompletionSpec> completionSpecs;
     List<String> directoryStack;
@@ -165,6 +177,15 @@ public class InterpreterState {
         this.expansionExitCode = null;
         this.expansionStderr = "";
         this.pendingOutputProcessSubs = new ArrayList<>();
+
+        this.aliases = new LinkedHashMap<>();
+        this.expandingAliases = new HashSet<>();
+
+        this.getoptsOptind = 1;
+        this.getoptsNextCharIndex = 0;
+        this.getoptsArgList = null;
+
+        this.trapHandlers = new LinkedHashMap<>();
 
         this.completionSpecs = new HashMap<>();
         this.directoryStack = new ArrayList<>();
@@ -266,6 +287,15 @@ public class InterpreterState {
         copy.expansionExitCode = this.expansionExitCode;
         copy.expansionStderr = this.expansionStderr;
         copy.pendingOutputProcessSubs = new ArrayList<>();
+
+        copy.aliases = new LinkedHashMap<>(this.aliases);
+        copy.expandingAliases = new HashSet<>();
+
+        copy.getoptsOptind = this.getoptsOptind;
+        copy.getoptsNextCharIndex = this.getoptsNextCharIndex;
+        copy.getoptsArgList = this.getoptsArgList != null ? new ArrayList<>(this.getoptsArgList) : null;
+
+        copy.trapHandlers = new LinkedHashMap<>(this.trapHandlers);
 
         copy.completionSpecs = new HashMap<>();
         for (Map.Entry<String, CompletionSpec> entry : this.completionSpecs.entrySet()) {

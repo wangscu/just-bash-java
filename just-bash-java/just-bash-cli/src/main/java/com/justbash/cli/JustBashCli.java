@@ -2,10 +2,13 @@ package com.justbash.cli;
 
 import com.justbash.Bash;
 import com.justbash.BashExecResult;
+import com.justbash.BashOptions;
 import com.justbash.commands.CommandRegistry;
+import com.justbash.fs.OverlayFs;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.Map;
+import java.util.Optional;
 
 public class JustBashCli {
 
@@ -45,7 +48,19 @@ public class JustBashCli {
             script = "set -e\n" + script;
         }
 
-        Bash bash = new Bash();
+        Bash bash;
+        if (opts.root != null) {
+            OverlayFs overlayFs = new OverlayFs(
+                new OverlayFs.OverlayFsOptions(opts.root, null, !opts.allowWrite, 0, false));
+            BashOptions bashOptions = new BashOptions(
+                Optional.empty(), Optional.empty(), Optional.of(overlayFs),
+                Optional.empty(), Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.empty()
+            );
+            bash = new Bash(bashOptions);
+        } else {
+            bash = new Bash();
+        }
         CommandRegistry.registerAll(bash);
 
         try {
@@ -139,6 +154,16 @@ public class JustBashCli {
             } else if (arg.equals("--json")) {
                 opts.json = true;
                 i++;
+            } else if (arg.equals("--root")) {
+                if (i + 1 >= args.length) {
+                    System.err.println("Error: --root requires a path argument");
+                    System.exit(1);
+                }
+                opts.root = args[i + 1];
+                i += 2;
+            } else if (arg.equals("--allow-write")) {
+                opts.allowWrite = true;
+                i++;
             } else if (arg.startsWith("-") && arg.length() > 2 && !arg.startsWith("--")) {
                 // Combined short flags like -ec
                 for (char c : arg.substring(1).toCharArray()) {
@@ -188,6 +213,8 @@ public class JustBashCli {
               -c <script>       Execute the script from command line argument
               -e, --errexit     Exit immediately if a command exits with non-zero status
               --json            Output results as JSON (stdout, stderr, exitCode)
+              --root <path>     Root directory for overlay filesystem
+              --allow-write     Allow write operations (writes stay in memory)
               -h, --help        Show this help message
               -v, --version     Show version
 
@@ -203,6 +230,12 @@ public class JustBashCli {
 
               # Exit on first error
               just-bash -e -c 'false; echo not reached'
+
+              # Execute with real directory overlay (read-only)
+              just-bash --root . -c 'ls -la'
+
+              # Execute with real directory overlay (allow writes)
+              just-bash --root . --allow-write -c 'echo test > /tmp/file.txt && cat /tmp/file.txt'
             """);
     }
 
@@ -212,5 +245,7 @@ public class JustBashCli {
         boolean json;
         boolean help;
         boolean version;
+        String root;
+        boolean allowWrite;
     }
 }

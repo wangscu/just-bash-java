@@ -293,9 +293,17 @@ public class Lexer {
 
     private Token readWord(int startLine, int startCol) {
         StringBuilder sb = new StringBuilder();
+        boolean inSingleQuote = false;
+        boolean inDoubleQuote = false;
         while (!isAtEnd()) {
             char ch = peek();
-            if (ch == '$') {
+            // Track quote state
+            if (!inSingleQuote && ch == '"') {
+                inDoubleQuote = !inDoubleQuote;
+            } else if (!inDoubleQuote && ch == '\'') {
+                inSingleQuote = !inSingleQuote;
+            }
+            if (ch == '$' && !inSingleQuote) {
                 // Check for $(( arithmetic expansion
                 if (!isAtEnd(1) && peek(1) == '(' && !isAtEnd(2) && peek(2) == '(') {
                     sb.append(advance()); // $
@@ -315,16 +323,16 @@ public class Lexer {
                     sb.append(advance()); // $
                     sb.append(advance()); // (
                     int depth = 1;
-                    boolean inSingleQuote = false;
-                    boolean inDoubleQuote = false;
+                    boolean csInSingleQuote = false;
+                    boolean csInDoubleQuote = false;
                     while (!isAtEnd() && depth > 0) {
                         char c = advance();
                         sb.append(c);
-                        if (!inSingleQuote && c == '"' && !inDoubleQuote) {
-                            inDoubleQuote = !inDoubleQuote;
-                        } else if (!inDoubleQuote && c == '\'') {
-                            inSingleQuote = !inSingleQuote;
-                        } else if (!inSingleQuote && !inDoubleQuote) {
+                        if (!csInSingleQuote && c == '"' && !csInDoubleQuote) {
+                            csInDoubleQuote = !csInDoubleQuote;
+                        } else if (!csInDoubleQuote && c == '\'') {
+                            csInSingleQuote = !csInSingleQuote;
+                        } else if (!csInSingleQuote && !csInDoubleQuote) {
                             if (c == '(') depth++;
                             else if (c == ')') depth--;
                         }
@@ -344,7 +352,7 @@ public class Lexer {
                     continue;
                 }
             }
-            if (isWordDelimiter(ch)) {
+            if (!inSingleQuote && !inDoubleQuote && isWordDelimiter(ch)) {
                 break;
             }
             sb.append(advance());

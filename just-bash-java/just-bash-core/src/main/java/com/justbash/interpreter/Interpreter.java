@@ -58,17 +58,51 @@ public class Interpreter {
 
     /** Execute a ScriptNode (top-level entry point) */
     public BashExecResult executeScript(ScriptNode script) {
+        BashExecResult result;
+        ExecResult trapResult = new ExecResult("", "", 0);
         try {
-            var result = executeScriptRaw(script);
-            return new BashExecResult(result.stdout(), result.stderr(), result.exitCode(), Map.copyOf(state.env));
-        } catch (ExitException e) {
-            return new BashExecResult(e.stdout(), e.stderr(), e.exitCode(), Map.copyOf(state.env));
-        } catch (ReturnException e) {
-            // Return at top level: set exit code and stop
-            state.lastExitCode = e.exitCode();
-            state.env.put("?", String.valueOf(e.exitCode()));
-            return new BashExecResult("", "", e.exitCode(), Map.copyOf(state.env));
+            try {
+                var rawResult = executeScriptRaw(script);
+                result = new BashExecResult(rawResult.stdout(), rawResult.stderr(), rawResult.exitCode(), Map.copyOf(state.env));
+            } catch (ExitException e) {
+                result = new BashExecResult(e.stdout(), e.stderr(), e.exitCode(), Map.copyOf(state.env));
+            } catch (ReturnException e) {
+                // Return at top level: set exit code and stop
+                state.lastExitCode = e.exitCode();
+                state.env.put("?", String.valueOf(e.exitCode()));
+                result = new BashExecResult("", "", e.exitCode(), Map.copyOf(state.env));
+            } catch (ExecutionLimitException e) {
+                String msg = e.getMessage() + "\n";
+                result = new BashExecResult("", msg, ExecutionLimitException.EXIT_CODE, Map.copyOf(state.env));
+            }
+        } finally {
+            trapResult = runExitTrap();
         }
+        if (trapResult.exitCode() != 0 || !trapResult.stdout().isEmpty() || !trapResult.stderr().isEmpty()) {
+            result = new BashExecResult(
+                result.stdout() + trapResult.stdout(),
+                result.stderr() + trapResult.stderr(),
+                trapResult.exitCode() != 0 ? trapResult.exitCode() : result.exitCode(),
+                Map.copyOf(state.env)
+            );
+        }
+        return result;
+    }
+
+    private ExecResult runExitTrap() {
+        String trapCmd = state.trapHandlers.get("EXIT");
+        if (trapCmd == null || trapCmd.isEmpty()) {
+            return new ExecResult("", "", 0);
+        }
+        try {
+            var ast = Parser.parse(trapCmd);
+            if (ast instanceof ScriptNode script) {
+                return executeScriptRaw(script);
+            }
+        } catch (Exception e) {
+            // Ignore trap execution errors
+        }
+        return new ExecResult("", "", 0);
     }
 
     /** Execute a StatementNode (handles &&, || between pipelines) */
@@ -113,6 +147,13 @@ public class Interpreter {
 
     /** Execute a single CommandNode */
     public ExecResult executeCommand(CommandNode cmd, String stdin) {
+        state.commandCount++;
+        if (state.commandCount > options.limits().maxCommandCount()) {
+            throw new ExecutionLimitException(
+                "too many commands executed (>" + options.limits().maxCommandCount() +
+                    "), increase executionLimits.maxCommandCount",
+                "maxCommandCount");
+        }
         return switch (cmd) {
             case SimpleCommandNode simple -> executeSimpleCommand(simple, stdin);
             case IfNode ifNode -> executeIfCommand(ifNode, stdin);
@@ -193,8 +234,16 @@ public class Interpreter {
             String stdout = "";
             String stderr = "";
             int exitCode = 0;
+            int iterations = 0;
 
             for (String value : values) {
+                iterations++;
+                if (iterations > options.limits().maxLoopIterations()) {
+                    throw new ExecutionLimitException(
+                        "for loop: too many iterations (" + options.limits().maxLoopIterations() +
+                            "), increase executionLimits.maxLoopIterations",
+                        "maxLoopIterations");
+                }
                 state.env.put(forNode.variable(), value);
                 try {
                     for (StatementNode stmt : forNode.body()) {
@@ -239,7 +288,16 @@ public class Interpreter {
             String stderr = "";
             int exitCode = 0;
 
+            int iterations = 0;
             while (true) {
+                iterations++;
+                if (iterations > options.limits().maxLoopIterations()) {
+                    throw new ExecutionLimitException(
+                        (whileNode.isUntil() ? "until" : "while") +
+                            " loop: too many iterations (" + options.limits().maxLoopIterations() +
+                            "), increase executionLimits.maxLoopIterations",
+                        "maxLoopIterations");
+                }
                 int condExit = executeStatements(whileNode.condition(), stdin).exitCode();
                 boolean shouldRun = whileNode.isUntil() ? (condExit != 0) : (condExit == 0);
                 if (!shouldRun) break;
@@ -462,13 +520,37 @@ public class Interpreter {
         // Expand command name
         String commandName = expansion.expandWord(cmd.name(), state, executor).get(0);
 
-        // Expand arguments with brace and glob expansion
-        List<String> args = new ArrayList<>();
-        for (var argWord : cmd.args()) {
-            List<String> expanded = expansion.expandWord(argWord, state, executor);
-            expanded = expansion.expandBraces(expanded);
-            expanded = expansion.expandGlobs(expanded, options.fs(), state);
-            args.addAll(expanded);
+        // Alias expansion
+        List<String> args;
+        List<String> aliasExpanded = expandAlias(commandName, state);
+        if (aliasExpanded != null) {
+            commandName = aliasExpanded.get(0);
+            // Prepend alias arguments before command arguments
+            List<String> aliasArgs = aliasExpanded.size() > 1
+                ? aliasExpanded.subList(1, aliasExpanded.size())
+                : List.of();
+
+            // Expand original command arguments
+            List<String> originalArgs = new ArrayList<>();
+            for (var argWord : cmd.args()) {
+                List<String> expanded = expansion.expandWord(argWord, state, executor);
+                expanded = expansion.expandBraces(expanded);
+                expanded = expansion.expandGlobs(expanded, options.fs(), state);
+                originalArgs.addAll(expanded);
+            }
+
+            // Combine: alias args first, then original args
+            args = new ArrayList<>(aliasArgs);
+            args.addAll(originalArgs);
+        } else {
+            // Expand arguments with brace and glob expansion
+            args = new ArrayList<>();
+            for (var argWord : cmd.args()) {
+                List<String> expanded = expansion.expandWord(argWord, state, executor);
+                expanded = expansion.expandBraces(expanded);
+                expanded = expansion.expandGlobs(expanded, options.fs(), state);
+                args.addAll(expanded);
+            }
         }
 
         // Handle exec command: apply redirections to shell state, optionally run command
@@ -790,6 +872,12 @@ public class Interpreter {
 
     private ExecResult callFunction(FunctionDefNode func, List<String> args) {
         state.callDepth++;
+        if (state.callDepth > options.limits().maxCallDepth()) {
+            throw new ExecutionLimitException(
+                func.name() + ": maximum recursion depth (" + options.limits().maxCallDepth() +
+                    ") exceeded, increase executionLimits.maxCallDepth",
+                "maxCallDepth");
+        }
         state.pushLocalScope();
 
         Map<String, String> saved = new LinkedHashMap<>();
@@ -865,5 +953,31 @@ public class Interpreter {
             state.associativeArrayData.put(name, arr);
         }
         arr.put(key, value);
+    }
+
+    private List<String> expandAlias(String commandName, InterpreterState state) {
+        if (!state.shoptOptions.expand_aliases) {
+            return null;
+        }
+        String aliasValue = state.aliases.get(commandName);
+        if (aliasValue == null) {
+            return null;
+        }
+        if (state.expandingAliases.contains(commandName)) {
+            return null;
+        }
+        state.expandingAliases.add(commandName);
+        try {
+            // Split alias value by whitespace, filtering empty strings
+            List<String> parts = new ArrayList<>();
+            for (String part : aliasValue.split("\\s+")) {
+                if (!part.isEmpty()) {
+                    parts.add(part);
+                }
+            }
+            return parts.isEmpty() ? null : parts;
+        } finally {
+            state.expandingAliases.remove(commandName);
+        }
     }
 }

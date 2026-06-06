@@ -25,7 +25,7 @@ just-bash-java/
 │       ├── ast/                     # AST node definitions
 │       ├── parser/                  # Lexer and parser
 │       ├── interpreter/             # Execution engine
-│       ├── fs/                      # Virtual filesystem
+│       ├── fs/                      # Virtual filesystem (InMemoryFs, OverlayFs)
 │       └── security/                # Execution limits
 ├── just-bash-commands/              # External command implementations
 │   └── src/main/java/com/justbash/commands/
@@ -79,8 +79,14 @@ java -jar just-bash-cli/target/just-bash-cli-0.1.0-SNAPSHOT.jar --json -c 'echo 
 # Pipe script from stdin
 echo 'echo hello world' | java -jar just-bash-cli/target/just-bash-cli-0.1.0-SNAPSHOT.jar
 
-# Exit on first error (when implemented)
+# Exit on first error
 java -jar just-bash-cli/target/just-bash-cli-0.1.0-SNAPSHOT.jar -e -c 'false; echo not reached'
+
+# Execute with real directory overlay (read-only by default)
+java -jar just-bash-cli/target/just-bash-cli-0.1.0-SNAPSHOT.jar --root . -c 'ls -la'
+
+# Execute with real directory overlay (allow writes to memory)
+java -jar just-bash-cli/target/just-bash-cli-0.1.0-SNAPSHOT.jar --root . --allow-write -c 'echo test > /tmp/file.txt && cat /tmp/file.txt'
 ```
 
 ### CLI Options
@@ -97,6 +103,8 @@ Options:
   -c <script>       Execute the script from command line argument
   -e, --errexit     Exit immediately if a command exits with non-zero status
   --json            Output results as JSON (stdout, stderr, exitCode)
+  --root <path>     Root directory for overlay filesystem
+  --allow-write     Allow write operations (writes stay in memory)
   -h, --help        Show this help message
   -v, --version     Show version
 ```
@@ -124,6 +132,39 @@ public class Example {
         System.out.println("stderr: " + result.stderr());
         System.out.println("exit code: " + result.exitCode());
 
+        bash.shutdown();
+    }
+}
+```
+
+### With OverlayFs (real directory backed)
+
+```java
+import com.justbash.Bash;
+import com.justbash.BashOptions;
+import com.justbash.fs.OverlayFs;
+import java.util.Map;
+import java.util.Optional;
+
+public class OverlayExample {
+    public static void main(String[] args) {
+        OverlayFs fs = new OverlayFs(
+            new OverlayFs.OverlayFsOptions("/path/to/project")
+        );
+
+        BashOptions options = new BashOptions(
+            Optional.of(Map.of("MY_VAR", "hello")),
+            Optional.empty(),
+            Optional.of(fs),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty(),
+            Optional.empty()
+        );
+
+        Bash bash = new Bash(options);
+        // Scripts can read real files but writes stay in memory
         bash.shutdown();
     }
 }

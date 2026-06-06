@@ -5,6 +5,8 @@ import com.justbash.fs.IFileSystem;
 import com.justbash.fs.InMemoryFs;
 import com.justbash.interpreter.*;
 import com.justbash.interpreter.errors.ParseException;
+import com.justbash.network.NetworkConfig;
+import com.justbash.network.SecureHttpClient;
 import com.justbash.parser.Parser;
 import com.justbash.security.ExecutionLimits;
 import java.util.*;
@@ -18,6 +20,7 @@ public class Bash {
     private final ExecutionLimits limits;
     private final ExecutorService virtualThreadExecutor;
     private final Optional<BashLogger> logger;
+    private final Optional<SecureHttpClient> secureHttpClient;
 
     // Persistent interpreter state across exec() calls
     private InterpreterState state;
@@ -29,6 +32,7 @@ public class Bash {
         this.limits = options.executionLimits().orElse(ExecutionLimits.defaults());
         this.virtualThreadExecutor = Executors.newVirtualThreadPerTaskExecutor();
         this.logger = options.logger();
+        this.secureHttpClient = options.networkConfig().map(SecureHttpClient::create);
 
         // Initialize persistent state
         this.state = InterpreterState.defaults();
@@ -76,7 +80,8 @@ public class Bash {
                     this.fs,
                     this.commands,
                     this.limits,
-                    (scriptStr, execOpts) -> exec(scriptStr, execOpts)
+                    (scriptStr, execOpts) -> exec(scriptStr, execOpts),
+                    this.secureHttpClient
                 );
 
                 Interpreter interpreter = new Interpreter(interpOptions, this.state);

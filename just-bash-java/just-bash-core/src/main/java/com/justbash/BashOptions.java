@@ -1,6 +1,7 @@
 package com.justbash;
 
 import com.justbash.fs.IFileSystem;
+import com.justbash.network.NetworkConfig;
 import com.justbash.security.ExecutionLimits;
 import java.util.Map;
 import java.util.Optional;
