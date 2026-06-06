@@ -399,10 +399,13 @@ public class Interpreter {
             }
         }
 
+        // Apply persistent input redirections from prior exec
+        String effectiveStdin = applyPersistentInputRedirect(stdin);
+
         // Expand redirection targets and apply input redirections
         List<RedirectionNode> redirects = new ArrayList<>();
         List<String> redirectPaths = new ArrayList<>();
-        String redirectedStdin = stdin;
+        String redirectedStdin = effectiveStdin;
         for (var redir : cmd.redirections()) {
             if (redir.operator() == RedirectionNode.RedirectionOperator.HERESTRING) {
                 String content = expansion.expandWord(
@@ -425,7 +428,14 @@ public class Interpreter {
 
             String target = expansion.expandWord(
                 ((RedirectionNode.WordTarget) redir.target()).word(), state, executor).get(0);
-            String resolved = target.startsWith("/") ? target : state.cwd + "/" + target;
+            String resolved;
+            if (redir.operator() == RedirectionNode.RedirectionOperator.GTAMP
+                || redir.operator() == RedirectionNode.RedirectionOperator.LTAMP) {
+                // FD duplication targets are literal numbers, not paths
+                resolved = target;
+            } else {
+                resolved = target.startsWith("/") ? target : state.cwd + "/" + target;
+            }
 
             if (redir.operator() == RedirectionNode.RedirectionOperator.LT) {
                 // Input redirection
@@ -459,6 +469,19 @@ public class Interpreter {
             expanded = expansion.expandBraces(expanded);
             expanded = expansion.expandGlobs(expanded, options.fs(), state);
             args.addAll(expanded);
+        }
+
+        // Handle exec command: apply redirections to shell state, optionally run command
+        boolean isExec = commandName.equals("exec");
+        if (isExec) {
+            applyExecRedirections(redirects, redirectPaths);
+            redirects.clear();
+            redirectPaths.clear();
+            if (args.isEmpty()) {
+                return applyPersistentOutputRedirect(new ExecResult("", "", 0));
+            }
+            commandName = args.get(0);
+            args = new ArrayList<>(args.subList(1, args.size()));
         }
 
         ExecResult result;
@@ -496,6 +519,7 @@ public class Interpreter {
 
         state.groupStdin = savedGroupStdin;
         result = applyOutputRedirections(result, redirects, redirectPaths);
+        result = applyPersistentOutputRedirect(result);
 
         // Execute pending output process substitutions
         for (var pending : new ArrayList<>(state.pendingOutputProcessSubs)) {
@@ -552,6 +576,60 @@ public class Interpreter {
                         stderr = "";
                     }
                 }
+                case GTAMP -> {
+                    int fd = redir.fd().orElse(1);
+                    if (resolved.equals("-")) {
+                        state.fileDescriptors.remove(fd);
+                        if (fd == 1) stdout = "";
+                        if (fd == 2) stderr = "";
+                    } else {
+                        try {
+                            int srcFd = Integer.parseInt(resolved);
+                            if (fd == 2 && srcFd == 1) {
+                                // 2>&1: merge stderr into stdout
+                                stdout += stderr;
+                                stderr = "";
+                            } else if (fd == 1 && srcFd == 2) {
+                                // >&2: merge stdout into stderr
+                                stderr += stdout;
+                                stdout = "";
+                            } else if (fd >= 3 || srcFd >= 3) {
+                                // Virtual fd handling: write to the file fd srcFd points to,
+                                // but do NOT modify state.fileDescriptors (this is a temporary redirect)
+                                String srcValue = state.fileDescriptors.get(srcFd);
+                                if (srcValue != null && (srcValue.startsWith("w:") || srcValue.startsWith("a:") || srcValue.startsWith("rw:"))) {
+                                    String path = srcValue.substring(srcValue.indexOf(':') + 1);
+                                    boolean append = srcValue.startsWith("a:");
+                                    if (fd == 1) {
+                                        writeFile(path, stdout, append);
+                                        stdout = "";
+                                    } else if (fd == 2) {
+                                        writeFile(path, stderr, append);
+                                        stderr = "";
+                                    }
+                                }
+                            }
+                        } catch (NumberFormatException e) {
+                            // ignore invalid fd
+                        }
+                    }
+                }
+                case LTAMP -> {
+                    int fd = redir.fd().orElse(0);
+                    if (resolved.equals("-")) {
+                        state.fileDescriptors.remove(fd);
+                    } else {
+                        try {
+                            int srcFd = Integer.parseInt(resolved);
+                            String srcValue = state.fileDescriptors.get(srcFd);
+                            if (srcValue != null) {
+                                state.fileDescriptors.put(fd, srcValue);
+                            }
+                        } catch (NumberFormatException e) {
+                            // ignore invalid fd
+                        }
+                    }
+                }
                 default -> { /* ignore unsupported for MVP */ }
             }
         }
@@ -579,6 +657,101 @@ public class Interpreter {
             }
         } catch (Exception e) {
             // Ignore write errors for MVP
+        }
+    }
+
+    private String applyPersistentInputRedirect(String stdin) {
+        String fd0 = state.fileDescriptors.get(0);
+        if (fd0 != null && (fd0.startsWith("r:") || fd0.startsWith("rw:"))) {
+            String path = fd0.substring(fd0.indexOf(':') + 1);
+            try {
+                return options.fs().readFile(path).join();
+            } catch (Exception e) {
+                // Fall through to return original stdin
+            }
+        }
+        return stdin;
+    }
+
+    private ExecResult applyPersistentOutputRedirect(ExecResult result) {
+        String stdout = result.stdout();
+        String stderr = result.stderr();
+        int exitCode = result.exitCode();
+
+        String fd1 = state.fileDescriptors.get(1);
+        if (fd1 != null) {
+            if (fd1.startsWith("w:")) {
+                // exec >file truncated the file; subsequent writes append
+                writeFile(fd1.substring(2), stdout, true);
+                stdout = "";
+            } else if (fd1.startsWith("a:")) {
+                writeFile(fd1.substring(2), stdout, true);
+                stdout = "";
+            } else if (fd1.startsWith("rw:")) {
+                writeFile(fd1.substring(3), stdout, true);
+                stdout = "";
+            }
+        }
+
+        String fd2 = state.fileDescriptors.get(2);
+        if (fd2 != null) {
+            if (fd2.startsWith("w:")) {
+                writeFile(fd2.substring(2), stderr, true);
+                stderr = "";
+            } else if (fd2.startsWith("a:")) {
+                writeFile(fd2.substring(2), stderr, true);
+                stderr = "";
+            } else if (fd2.startsWith("rw:")) {
+                writeFile(fd2.substring(3), stderr, false);
+                stderr = "";
+            }
+        }
+
+        return new ExecResult(stdout, stderr, exitCode);
+    }
+
+    private void applyExecRedirections(List<RedirectionNode> redirects, List<String> redirectPaths) {
+        for (int i = 0; i < redirects.size(); i++) {
+            var redir = redirects.get(i);
+            String target = redirectPaths.get(i);
+
+            switch (redir.operator()) {
+                case GT -> {
+                    int fd = redir.fd().orElse(1);
+                    state.fileDescriptors.put(fd, "w:" + target);
+                    // Truncate file immediately so subsequent commands append
+                    writeFile(target, "", false);
+                }
+                case GTGT -> {
+                    int fd = redir.fd().orElse(1);
+                    state.fileDescriptors.put(fd, "a:" + target);
+                }
+                case LT -> {
+                    int fd = redir.fd().orElse(0);
+                    state.fileDescriptors.put(fd, "r:" + target);
+                }
+                case GTAMP, LTAMP -> {
+                    int fd = redir.fd().orElse(redir.operator() == RedirectionNode.RedirectionOperator.GTAMP ? 1 : 0);
+                    if (target.equals("-")) {
+                        state.fileDescriptors.remove(fd);
+                    } else {
+                        try {
+                            int srcFd = Integer.parseInt(target);
+                            String src = state.fileDescriptors.get(srcFd);
+                            if (src != null) {
+                                state.fileDescriptors.put(fd, src);
+                            }
+                        } catch (NumberFormatException e) {
+                            // ignore invalid fd
+                        }
+                    }
+                }
+                case LTGT -> {
+                    int fd = redir.fd().orElse(0);
+                    state.fileDescriptors.put(fd, "rw:" + target);
+                }
+                default -> { /* ignore */ }
+            }
         }
     }
 

@@ -1822,4 +1822,121 @@ class CompoundCommandTest {
         assertThat(result.stderr()).contains("nonexistent2");
         bash.shutdown();
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Exec FD Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void execRedirectStdout() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("exec >/tmp/exec_out.txt; echo hello; echo world").join();
+        String content = bash.readFile("/tmp/exec_out.txt").join();
+        assertThat(content).isEqualTo("hello\nworld\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execRedirectStdin() {
+        Bash bash = new Bash();
+        bash.exec("echo hello > /tmp/exec_in.txt").join();
+        var result = bash.exec("exec </tmp/exec_in.txt; cat").join();
+        // cat is not implemented, but stdin should be redirected; the unknown command error goes to stderr
+        assertThat(result.stderr()).contains("command not found");
+        bash.shutdown();
+    }
+
+    @Test
+    void execRedirectStderr() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("exec 2>/tmp/exec_err.txt; echo hello >&2").join();
+        String content = bash.readFile("/tmp/exec_err.txt").join();
+        assertThat(content).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execRedirectAppend() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("echo first > /tmp/exec_append.txt").join();
+        bash.exec("exec >>/tmp/exec_append.txt; echo second").join();
+        bash.exec("exec >>/tmp/exec_append.txt; echo third").join();
+        String content = bash.readFile("/tmp/exec_append.txt").join();
+        assertThat(content).isEqualTo("first\nsecond\nthird\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execRedirectStdoutOverwrite() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("echo old > /tmp/exec_over.txt").join();
+        bash.exec("exec >/tmp/exec_over.txt; echo new").join();
+        String content = bash.readFile("/tmp/exec_over.txt").join();
+        assertThat(content).isEqualTo("new\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execVirtualFdOutput() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("exec 3>/tmp/exec_fd3.txt; echo hello >&3").join();
+        String content = bash.readFile("/tmp/exec_fd3.txt").join();
+        assertThat(content).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execVirtualFdOverwrite() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("exec 3>/tmp/exec_fd3o.txt; echo first >&3; echo second >&3").join();
+        String content = bash.readFile("/tmp/exec_fd3o.txt").join();
+        // Each >&3 creates a fresh redirect to fd 3, overwriting the file
+        assertThat(content).isEqualTo("second\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execCloseFd() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("exec 3>/tmp/exec_close.txt; echo hello >&3").join();
+        bash.exec("exec 3>&-; echo world >&3 || true").join();
+        String content = bash.readFile("/tmp/exec_close.txt").join();
+        assertThat(content).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execFdDup() throws Exception {
+        Bash bash = new Bash();
+        bash.exec("exec 3>&1; exec >/tmp/exec_dup.txt; echo hello >&3").join();
+        String content = bash.readFile("/tmp/exec_dup.txt").join();
+        assertThat(content).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void execWithCommand() {
+        Bash bash = new Bash();
+        var result = bash.exec("exec echo hello").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void regularCommandRedirectStderrToStdout() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo hello; echo world >&2").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        assertThat(result.stderr()).isEqualTo("world\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void regularCommandRedirectStdoutToStderr() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo hello >&2").join();
+        assertThat(result.stdout()).isEmpty();
+        assertThat(result.stderr()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
 }
