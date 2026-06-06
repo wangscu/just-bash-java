@@ -378,4 +378,12 @@ public class InterpreterState {
     public void setPreviousDir(String previousDir) {
         this.previousDir = previousDir;
     }
+
+    public String getGroupStdin() {
+        return groupStdin;
+    }
+
+    public void setGroupStdin(String groupStdin) {
+        this.groupStdin = groupStdin;
+    }
 }

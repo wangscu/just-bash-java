@@ -1762,7 +1762,7 @@ public class BuiltinDispatcher {
 
     private ExecResult handlePrintf(List<String> args, InterpreterState state) {
         if (args.isEmpty()) {
-            return new ExecResult("", "bash: printf: usage: printf format [arguments]\n", 2);
+            return new ExecResult("", "bash: printf: usage: printf format [arguments]\n", 1);
         }
 
         int idx = 0;

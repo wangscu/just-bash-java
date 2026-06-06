@@ -85,8 +85,19 @@ public class Bash {
                     this.secureHttpClient
                 );
 
+                // Connect ExecOptions.stdin to the interpreter pipeline
+                String savedGroupStdin = this.state.getGroupStdin();
+                if (options.stdin().isPresent()) {
+                    this.state.setGroupStdin(options.stdin().get());
+                }
+
                 Interpreter interpreter = new Interpreter(interpOptions, this.state);
-                BashExecResult result = interpreter.executeScript(script);
+                BashExecResult result;
+                try {
+                    result = interpreter.executeScript(script);
+                } finally {
+                    this.state.setGroupStdin(savedGroupStdin);
+                }
                 return result;
             }
             return new BashExecResult("", "", 0, Map.copyOf(state.getEnv()));

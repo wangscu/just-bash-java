@@ -431,51 +431,49 @@ class TextCommandTest {
     }
 
     // ========== tr ==========
-    // tr reads from stdin; we test the command directly since bash stdin
-    // via ExecOptions is not wired up, and < redirection leaks to stdout.
 
     @Test
     void trTranslate() {
-        TrCommand cmd = new TrCommand();
-        com.justbash.SimpleCommandContext ctx = new com.justbash.SimpleCommandContext(
-            new InMemoryFs(), "/", java.util.Map.of(), java.util.Map.of(),
-            "hello\n", null
-        );
-        ExecResult result = cmd.execute(java.util.List.of("a-z", "A-Z"), ctx).join();
+        Bash bash = createBash();
+        BashExecResult result = bash.exec("tr a-z A-Z",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("hello\n"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
         assertThat(result.stdout()).isEqualTo("HELLO\n");
+        bash.shutdown();
     }
 
     @Test
     void trDelete() {
-        TrCommand cmd = new TrCommand();
-        com.justbash.SimpleCommandContext ctx = new com.justbash.SimpleCommandContext(
-            new InMemoryFs(), "/", java.util.Map.of(), java.util.Map.of(),
-            "hello world\n", null
-        );
-        ExecResult result = cmd.execute(java.util.List.of("-d", " "), ctx).join();
+        Bash bash = createBash();
+        BashExecResult result = bash.exec("tr -d ' '",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("hello world\n"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
         assertThat(result.stdout()).isEqualTo("helloworld\n");
+        bash.shutdown();
     }
 
     @Test
     void trSqueeze() {
-        TrCommand cmd = new TrCommand();
-        com.justbash.SimpleCommandContext ctx = new com.justbash.SimpleCommandContext(
-            new InMemoryFs(), "/", java.util.Map.of(), java.util.Map.of(),
-            "hello   world\n", null
-        );
-        ExecResult result = cmd.execute(java.util.List.of("-s", " "), ctx).join();
+        Bash bash = createBash();
+        BashExecResult result = bash.exec("tr -s ' '",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("hello   world\n"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
         assertThat(result.stdout()).isEqualTo("hello world\n");
+        bash.shutdown();
     }
 
     @Test
     void trPosixClass() {
-        TrCommand cmd = new TrCommand();
-        com.justbash.SimpleCommandContext ctx = new com.justbash.SimpleCommandContext(
-            new InMemoryFs(), "/", java.util.Map.of(), java.util.Map.of(),
-            "abc123\n", null
-        );
-        ExecResult result = cmd.execute(java.util.List.of("[:digit:]", "X"), ctx).join();
+        Bash bash = createBash();
+        BashExecResult result = bash.exec("tr '[:digit:]' 'X'",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("abc123\n"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
         assertThat(result.stdout()).isEqualTo("abcXXX\n");
+        bash.shutdown();
     }
 
     // ========== sort ==========
