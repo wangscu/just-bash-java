@@ -12,6 +12,7 @@ import com.justbash.interpreter.errors.ReturnException;
 import com.justbash.parser.Parser;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -362,6 +363,9 @@ public class BuiltinDispatcher {
         boolean exportFlag = false;
         boolean readonlyFlag = false;
         boolean integerFlag = false;
+        boolean associativeFlag = false;
+        boolean indexedFlag = false;
+        boolean printFlag = false;
         List<String> processed = new ArrayList<>();
 
         for (String arg : args) {
@@ -371,16 +375,60 @@ public class BuiltinDispatcher {
                 readonlyFlag = true;
             } else if (arg.equals("-i")) {
                 integerFlag = true;
+            } else if (arg.equals("-A")) {
+                associativeFlag = true;
+            } else if (arg.equals("-a")) {
+                indexedFlag = true;
+            } else if (arg.equals("-p")) {
+                printFlag = true;
             } else if (arg.startsWith("-") && !arg.equals("-")) {
                 // Handle combined flags like -xr, -ri, etc.
                 for (char c : arg.substring(1).toCharArray()) {
                     if (c == 'x') exportFlag = true;
                     else if (c == 'r') readonlyFlag = true;
                     else if (c == 'i') integerFlag = true;
+                    else if (c == 'A') associativeFlag = true;
+                    else if (c == 'a') indexedFlag = true;
+                    else if (c == 'p') printFlag = true;
                 }
             } else {
                 processed.add(arg);
             }
+        }
+
+        if (printFlag && !processed.isEmpty()) {
+            StringBuilder stdout = new StringBuilder();
+            for (String name : processed) {
+                String attrs = "";
+                if (state.readonlyVars.contains(name)) attrs += " -r";
+                if (state.integerVars.contains(name)) attrs += " -i";
+                if (state.exportedVars.contains(name)) attrs += " -x";
+                if (state.associativeArrays.contains(name)) attrs += " -A";
+                if (state.indexedArrays.containsKey(name) && !state.associativeArrays.contains(name)) attrs += " -a";
+                if (attrs.isEmpty()) attrs = " --";
+                stdout.append("declare").append(attrs).append(" ").append(name);
+                if (state.associativeArrays.contains(name)) {
+                    stdout.append("=");
+                    Map<String, String> data = state.associativeArrayData.getOrDefault(name, Map.of());
+                    if (data.isEmpty()) {
+                        stdout.append("()");
+                    } else {
+                        stdout.append("(");
+                        boolean first = true;
+                        for (Map.Entry<String, String> entry : data.entrySet()) {
+                            if (!first) stdout.append(" ");
+                            stdout.append("[").append(entry.getKey()).append("]=\"").append(entry.getValue()).append("\"");
+                            first = false;
+                        }
+                        stdout.append(")");
+                    }
+                } else {
+                    String value = state.env.getOrDefault(name, "");
+                    stdout.append("=\"").append(value).append("\"");
+                }
+                stdout.append("\n");
+            }
+            return new ExecResult(stdout.toString(), "", 0);
         }
 
         if (processed.isEmpty()) {
@@ -395,6 +443,8 @@ public class BuiltinDispatcher {
                 if (state.readonlyVars.contains(name)) attrs += " -r";
                 if (state.integerVars.contains(name)) attrs += " -i";
                 if (state.exportedVars.contains(name)) attrs += " -x";
+                if (state.associativeArrays.contains(name)) attrs += " -A";
+                if (state.indexedArrays.containsKey(name) && !state.associativeArrays.contains(name)) attrs += " -a";
                 if (attrs.isEmpty()) attrs = " --";
                 stdout.append("declare").append(attrs).append(" ").append(name).append("=\"").append(value).append("\"\n");
             }
@@ -413,6 +463,13 @@ public class BuiltinDispatcher {
                 value = state.env.get(name);
             }
 
+            if (associativeFlag) {
+                state.associativeArrays.add(name);
+                state.associativeArrayData.putIfAbsent(name, new LinkedHashMap<>());
+            }
+            if (indexedFlag) {
+                state.indexedArrays.putIfAbsent(name, new ArrayList<>());
+            }
             if (value != null) {
                 state.env.put(name, value);
             }
@@ -464,7 +521,10 @@ public class BuiltinDispatcher {
         // Split by IFS
         String ifs = state.env.getOrDefault("IFS", " \t\n");
         String[] fields;
-        if (ifs.contains(" ") && ifs.contains("\t")) {
+        if (ifs.isEmpty()) {
+            // Empty IFS: no splitting, entire line goes to first variable
+            fields = new String[] { line };
+        } else if (ifs.contains(" ") && ifs.contains("\t")) {
             fields = line.split("[ \\t]+", varNames.size());
         } else {
             String regex = "[" + Pattern.quote(ifs) + "]+";

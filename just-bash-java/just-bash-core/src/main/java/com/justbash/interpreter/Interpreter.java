@@ -6,7 +6,9 @@ import com.justbash.ExecResult;
 import com.justbash.SimpleCommandContext;
 import com.justbash.ast.*;
 import com.justbash.ast.command.*;
+import com.justbash.ast.word.LiteralPart;
 import com.justbash.ast.word.WordNode;
+import com.justbash.parser.Parser;
 import com.justbash.fs.IFileSystem;
 import com.justbash.fs.WriteFileOptions;
 import com.justbash.interpreter.errors.*;
@@ -27,6 +29,7 @@ public class Interpreter {
     public Interpreter(InterpreterOptions options, InterpreterState state) {
         this.options = options;
         this.state = state;
+        this.expansion.setFileSystem(options.fs());
         this.pipelineExecutor = new PipelineExecutor(this);
         this.builtins = new BuiltinDispatcher(this);
     }
@@ -120,8 +123,20 @@ public class Interpreter {
             case SubshellNode subshell -> executeSubshellCommand(subshell, stdin);
             case FunctionDefNode func -> executeFunctionDef(func);
             case ArithmeticCommandNode arith -> executeArithmeticCommand(arith);
+            case ConditionalCommandNode cond -> executeConditionalCommand(cond);
             default -> new ExecResult("", "", 0); // Stub for MVP
         };
+    }
+
+    /** Execute a CommandNode with a local (copied) state for subshell isolation */
+    ExecResult executeCommand(CommandNode cmd, String stdin, InterpreterState localState) {
+        InterpreterState saved = this.state;
+        this.state = localState;
+        try {
+            return executeCommand(cmd, stdin);
+        } finally {
+            this.state = saved;
+        }
     }
 
     private ExecResult executeStatements(List<StatementNode> statements, String stdin) {
@@ -270,8 +285,25 @@ public class Interpreter {
     }
 
     private ExecResult executeSubshellCommand(SubshellNode subshell, String stdin) {
-        // For MVP, execute in same state (full subshell isolation is future work)
-        return executeStatements(subshell.body(), stdin);
+        InterpreterState savedState = this.state;
+        this.state = savedState.copy();
+        try {
+            try {
+                return executeStatements(subshell.body(), stdin);
+            } catch (ExitException e) {
+                // exit in subshell: return the exit code, don't propagate
+                return new ExecResult(e.stdout(), e.stderr(), e.exitCode());
+            } catch (ReturnException e) {
+                // return in subshell without function context: just return the code
+                return new ExecResult(e.stdout(), e.stderr(), e.exitCode());
+            }
+        } finally {
+            // Update parent's $? with subshell exit code
+            int subshellExitCode = this.state.lastExitCode;
+            this.state = savedState;
+            this.state.lastExitCode = subshellExitCode;
+            this.state.env.put("?", String.valueOf(subshellExitCode));
+        }
     }
 
     private ExecResult executeCaseCommand(CaseNode caseNode, String stdin) {
@@ -345,14 +377,19 @@ public class Interpreter {
                 }
                 state.indexedArrays.put(assignment.name(), elements);
             } else if (assignment.arrayIndex().isPresent()) {
-                // Indexed assignment: arr[index]=value
                 String index = expansion.expandWord(assignment.arrayIndex().get(), state, executor).get(0);
                 String value = "";
                 if (assignment.value().isPresent()) {
                     value = expansion.expandWord(assignment.value().get(), state, executor).get(0);
                 }
-                int idx = parseIntOrZero(index);
-                setArrayElement(assignment.name(), idx, value);
+                if (state.associativeArrays.contains(assignment.name())) {
+                    // Associative array assignment: arr[key]=value
+                    setAssociativeArrayElement(assignment.name(), index, value);
+                } else {
+                    // Indexed assignment: arr[index]=value
+                    int idx = parseIntOrZero(index);
+                    setArrayElement(assignment.name(), idx, value);
+                }
             } else {
                 String value = "";
                 if (assignment.value().isPresent()) {
@@ -364,8 +401,28 @@ public class Interpreter {
 
         // Expand redirection targets and apply input redirections
         List<RedirectionNode> redirects = new ArrayList<>();
+        List<String> redirectPaths = new ArrayList<>();
         String redirectedStdin = stdin;
         for (var redir : cmd.redirections()) {
+            if (redir.operator() == RedirectionNode.RedirectionOperator.HERESTRING) {
+                String content = expansion.expandWord(
+                    ((RedirectionNode.WordTarget) redir.target()).word(), state, executor).get(0);
+                redirectedStdin = content + "\n";
+                continue;
+            }
+            if (redir.operator() == RedirectionNode.RedirectionOperator.HEREDOC
+                || redir.operator() == RedirectionNode.RedirectionOperator.HEREDOC_STRIP) {
+                HereDocNode hereDoc = ((RedirectionNode.HereDocTarget) redir.target()).hereDoc();
+                String body = hereDoc.content().parts().get(0) instanceof LiteralPart lp
+                    ? lp.value() : "";
+                if (!hereDoc.quoted()) {
+                    WordNode bodyWord = Parser.parseWord(body, hereDoc.line());
+                    body = expansion.expandWord(bodyWord, state, executor).get(0);
+                }
+                redirectedStdin = body + "\n";
+                continue;
+            }
+
             String target = expansion.expandWord(
                 ((RedirectionNode.WordTarget) redir.target()).word(), state, executor).get(0);
             String resolved = target.startsWith("/") ? target : state.cwd + "/" + target;
@@ -379,12 +436,13 @@ public class Interpreter {
                 }
             } else {
                 redirects.add(redir);
+                redirectPaths.add(resolved);
             }
         }
 
         if (cmd.name() == null) {
             // Assignment-only command — still apply output redirections
-            return applyOutputRedirections(new ExecResult("", "", 0), redirects);
+            return applyOutputRedirections(new ExecResult("", "", 0), redirects, redirectPaths);
         }
 
         // Make redirected stdin available to builtins like read
@@ -437,18 +495,41 @@ public class Interpreter {
         }
 
         state.groupStdin = savedGroupStdin;
-        return applyOutputRedirections(result, redirects);
+        result = applyOutputRedirections(result, redirects, redirectPaths);
+
+        // Execute pending output process substitutions
+        for (var pending : new ArrayList<>(state.pendingOutputProcessSubs)) {
+            try {
+                String content = options.fs().readFile(pending.path()).join();
+                InterpreterState saved = this.state;
+                this.state = saved.copy();
+                this.state.groupStdin = content;
+                try {
+                    executeScriptRaw(pending.body());
+                } catch (ExitException | ReturnException e) {
+                    // Ignore for MVP
+                } finally {
+                    this.state = saved;
+                }
+            } catch (Exception e) {
+                // Ignore read errors for MVP
+            }
+        }
+        state.pendingOutputProcessSubs.clear();
+
+        return result;
     }
 
-    private ExecResult applyOutputRedirections(ExecResult result, List<RedirectionNode> redirects) {
+    private ExecResult applyOutputRedirections(ExecResult result,
+                                               List<RedirectionNode> redirects,
+                                               List<String> redirectPaths) {
         String stdout = result.stdout();
         String stderr = result.stderr();
         int exitCode = result.exitCode();
 
-        for (var redir : redirects) {
-            String target = expansion.expandWord(
-                ((RedirectionNode.WordTarget) redir.target()).word(), state, this::executeScriptRaw).get(0);
-            String resolved = target.startsWith("/") ? target : state.cwd + "/" + target;
+        for (int i = 0; i < redirects.size(); i++) {
+            var redir = redirects.get(i);
+            String resolved = redirectPaths.get(i);
 
             switch (redir.operator()) {
                 case GT -> {
@@ -525,6 +606,15 @@ public class Interpreter {
         return new ExecResult("", "", exitCode);
     }
 
+    private ExecResult executeConditionalCommand(ConditionalCommandNode cond) {
+        ConditionalExpressionEvaluator eval = new ConditionalExpressionEvaluator(state, options.fs());
+        boolean truthy = eval.evaluate(cond.expression());
+        int exitCode = truthy ? 0 : 1;
+        state.lastExitCode = exitCode;
+        state.env.put("?", String.valueOf(exitCode));
+        return new ExecResult("", "", exitCode);
+    }
+
     private ExecResult callFunction(FunctionDefNode func, List<String> args) {
         state.callDepth++;
         state.pushLocalScope();
@@ -593,5 +683,14 @@ public class Interpreter {
             arr.add("");
         }
         arr.set(index, value);
+    }
+
+    private void setAssociativeArrayElement(String name, String key, String value) {
+        Map<String, String> arr = state.associativeArrayData.get(name);
+        if (arr == null) {
+            arr = new LinkedHashMap<>();
+            state.associativeArrayData.put(name, arr);
+        }
+        arr.put(key, value);
     }
 }

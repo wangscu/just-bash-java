@@ -3,6 +3,7 @@ package com.justbash.interpreter;
 import com.justbash.ExecResult;
 import com.justbash.ast.PipelineNode;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 public class PipelineExecutor {
@@ -14,24 +15,49 @@ public class PipelineExecutor {
     }
 
     public ExecResult executePipeline(PipelineNode pipeline, InterpreterState state) {
-        String stdin = "";
-        String accumulatedStderr = "";
+        String stdin = state.groupStdin != null ? state.groupStdin : "";
         List<Integer> pipeStatus = new ArrayList<>();
+        List<ExecResult> results = new ArrayList<>();
 
         List<com.justbash.ast.command.CommandNode> commands = pipeline.commands();
+        List<Boolean> pipeStderr = pipeline.pipeStderr().orElse(Collections.emptyList());
 
         for (int i = 0; i < commands.size(); i++) {
             var cmd = commands.get(i);
-            var result = interpreter.executeCommand(cmd, stdin);
+
+            ExecResult result;
+            if (commands.size() > 1) {
+                // Subshell isolation: each segment runs with a copy of state
+                InterpreterState segmentState = state.copy();
+                segmentState.groupStdin = stdin;
+                result = interpreter.executeCommand(cmd, stdin, segmentState);
+            } else {
+                result = interpreter.executeCommand(cmd, stdin);
+            }
             pipeStatus.add(result.exitCode());
-            accumulatedStderr += result.stderr();
-            // Pass stdout as stdin to next command
-            stdin = result.stdout();
+            results.add(result);
+
+            // Determine what to pass to next command
+            boolean pipeBoth = i < pipeStderr.size() && pipeStderr.get(i);
+            if (pipeBoth) {
+                // |&: pipe stdout and stderr together
+                stdin = result.stdout() + result.stderr();
+            } else {
+                stdin = result.stdout();
+            }
         }
 
-        // The pipeline's stdout is the last command's stdout
-        String stdout = stdin;
-        String stderr = accumulatedStderr;
+        // Pipeline's stdout is the last command's stdout
+        String stdout = results.isEmpty() ? "" : results.get(results.size() - 1).stdout();
+
+        // Pipeline's stderr: only from commands whose stderr was not piped away
+        StringBuilder stderr = new StringBuilder();
+        for (int i = 0; i < results.size(); i++) {
+            boolean wasPiped = i < pipeStderr.size() && pipeStderr.get(i);
+            if (!wasPiped) {
+                stderr.append(results.get(i).stderr());
+            }
+        }
 
         // Determine pipeline exit code
         int exitCode;
@@ -56,7 +82,7 @@ public class PipelineExecutor {
         // Store PIPESTATUS
         state.env.put("PIPESTATUS", formatPipeStatus(pipeStatus));
 
-        return new ExecResult(stdout, stderr, exitCode);
+        return new ExecResult(stdout, stderr.toString(), exitCode);
     }
 
     private String formatPipeStatus(List<Integer> statuses) {

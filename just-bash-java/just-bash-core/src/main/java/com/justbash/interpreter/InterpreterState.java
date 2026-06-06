@@ -1,5 +1,6 @@
 package com.justbash.interpreter;
 
+import com.justbash.ast.ScriptNode;
 import com.justbash.ast.command.FunctionDefNode;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -17,6 +18,7 @@ public class InterpreterState {
     // Core Environment
     Map<String, String> env;
     Map<String, List<String>> indexedArrays;
+    Map<String, Map<String, String>> associativeArrayData;
     String cwd;
     String previousDir;
 
@@ -87,6 +89,10 @@ public class InterpreterState {
     Integer expansionExitCode;
     String expansionStderr;
 
+    // Process substitution pending output executions
+    public record PendingProcessSub(String path, ScriptNode body) {}
+    List<PendingProcessSub> pendingOutputProcessSubs;
+
     // Other
     Map<String, CompletionSpec> completionSpecs;
     List<String> directoryStack;
@@ -97,6 +103,7 @@ public class InterpreterState {
     public InterpreterState() {
         this.env = new LinkedHashMap<>();
         this.indexedArrays = new LinkedHashMap<>();
+        this.associativeArrayData = new LinkedHashMap<>();
         this.cwd = "/home/user";
         this.previousDir = "/home/user";
 
@@ -157,6 +164,7 @@ public class InterpreterState {
 
         this.expansionExitCode = null;
         this.expansionStderr = "";
+        this.pendingOutputProcessSubs = new ArrayList<>();
 
         this.completionSpecs = new HashMap<>();
         this.directoryStack = new ArrayList<>();
@@ -176,6 +184,10 @@ public class InterpreterState {
         copy.indexedArrays = new LinkedHashMap<>();
         for (Map.Entry<String, List<String>> entry : this.indexedArrays.entrySet()) {
             copy.indexedArrays.put(entry.getKey(), new ArrayList<>(entry.getValue()));
+        }
+        copy.associativeArrayData = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, String>> entry : this.associativeArrayData.entrySet()) {
+            copy.associativeArrayData.put(entry.getKey(), new LinkedHashMap<>(entry.getValue()));
         }
         copy.cwd = this.cwd;
         copy.previousDir = this.previousDir;
@@ -253,6 +265,7 @@ public class InterpreterState {
 
         copy.expansionExitCode = this.expansionExitCode;
         copy.expansionStderr = this.expansionStderr;
+        copy.pendingOutputProcessSubs = new ArrayList<>();
 
         copy.completionSpecs = new HashMap<>();
         for (Map.Entry<String, CompletionSpec> entry : this.completionSpecs.entrySet()) {

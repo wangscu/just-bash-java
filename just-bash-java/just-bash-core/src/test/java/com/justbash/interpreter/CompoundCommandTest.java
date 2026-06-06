@@ -1196,4 +1196,630 @@ class CompoundCommandTest {
         assertThat(result.stdout()).isEqualTo("pre-*.txt\n");
         bash.shutdown();
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Subshell Isolation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void subshellVariableIsolation() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=parent; (x=subshell; echo $x); echo $x").join();
+        assertThat(result.stdout()).isEqualTo("subshell\nparent\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void subshellCdIsolation() {
+        Bash bash = new Bash();
+        var result = bash.exec("pwd; (cd /; pwd); pwd").join();
+        assertThat(result.stdout()).isEqualTo("/home/user\n/\n/home/user\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void subshellExitOnlyExitsSubshell() {
+        Bash bash = new Bash();
+        var result = bash.exec("(exit 42); echo after; echo $?").join();
+        // echo after returns 0, so $? becomes 0 before the second echo
+        assertThat(result.stdout()).isEqualTo("after\n0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void subshellFunctionIsolation() {
+        Bash bash = new Bash();
+        var result = bash.exec("(f() { echo subshell; }); f; echo $?")
+            .join();
+        // Function defined in subshell should not exist in parent
+        assertThat(result.stderr()).contains("command not found");
+        bash.shutdown();
+    }
+
+    @Test
+    void subshellArrayIsolation() {
+        Bash bash = new Bash();
+        var result = bash.exec("arr=(a b); (arr=(x y z); echo ${arr[0]}); echo ${arr[0]}").join();
+        assertThat(result.stdout()).isEqualTo("x\na\n");
+        bash.shutdown();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // String Parameter Expansion Operations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void paramExpansionPrefixRemoveShortest() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=a.b.c.d; echo ${v#*.}").join();
+        assertThat(result.stdout()).isEqualTo("b.c.d\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionPrefixRemoveLongest() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=a.b.c.d; echo ${v##*.}").join();
+        assertThat(result.stdout()).isEqualTo("d\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionSuffixRemoveShortest() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=a.b.c.d; echo ${v%.*}").join();
+        assertThat(result.stdout()).isEqualTo("a.b.c\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionSuffixRemoveLongest() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=a.b.c.d; echo ${v%%.*}").join();
+        assertThat(result.stdout()).isEqualTo("a\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionPatternReplaceFirst() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=a.b.c.d; echo ${v/./-}").join();
+        assertThat(result.stdout()).isEqualTo("a-b.c.d\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionPatternReplaceAll() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=a.b.c.d; echo ${v//./-}").join();
+        assertThat(result.stdout()).isEqualTo("a-b-c-d\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionUppercaseAll() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=hello; echo ${v^^}").join();
+        assertThat(result.stdout()).isEqualTo("HELLO\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionLowercaseAll() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=HELLO; echo ${v,,}").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionSubstring() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=hello; echo ${v:1:3}").join();
+        assertThat(result.stdout()).isEqualTo("ell\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionSubstringToEnd() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=hello; echo ${v:2}").join();
+        assertThat(result.stdout()).isEqualTo("llo\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionDefaultValueSet() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=hello; echo ${v:-default}").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionDefaultValueUnset() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo ${unset:-default}").join();
+        assertThat(result.stdout()).isEqualTo("default\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionDefaultValueEmpty() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=; echo ${v:-default}").join();
+        assertThat(result.stdout()).isEqualTo("default\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionAssignDefault() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo ${unset:=default}; echo $unset").join();
+        assertThat(result.stdout()).isEqualTo("default\ndefault\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionUseAlternativeSet() {
+        Bash bash = new Bash();
+        var result = bash.exec("v=hello; echo ${v:+alt}").join();
+        assertThat(result.stdout()).isEqualTo("alt\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void paramExpansionUseAlternativeUnset() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo ${unset:+alt}").join();
+        assertThat(result.stdout()).isEqualTo("\n");
+        bash.shutdown();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Here-Strings
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void hereStringBasic() {
+        Bash bash = new Bash();
+        var result = bash.exec("read x <<< hello; echo $x").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void hereStringWithVariable() {
+        Bash bash = new Bash();
+        var result = bash.exec("msg=world; read x <<< $msg; echo $x").join();
+        assertThat(result.stdout()).isEqualTo("world\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void hereStringToMultipleVars() {
+        Bash bash = new Bash();
+        var result = bash.exec("read x y <<< hello; echo $x, $y").join();
+        assertThat(result.stdout()).isEqualTo("hello, \n");
+        bash.shutdown();
+    }
+
+    @Test
+    void hereStringWithArithmetic() {
+        Bash bash = new Bash();
+        var result = bash.exec("n=5; read x <<< $((n+3)); echo $x").join();
+        assertThat(result.stdout()).isEqualTo("8\n");
+        bash.shutdown();
+    }
+
+    // Associative Arrays
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void associativeArrayBasic() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[key]=hello; echo ${arr[key]}").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArrayMultipleKeys() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[a]=1; arr[b]=2; echo ${arr[a]} ${arr[b]}").join();
+        assertThat(result.stdout()).isEqualTo("1 2\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArrayAtExpansion() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[a]=1; arr[b]=2; for v in ${arr[@]}; do echo $v; done").join();
+        // Order of associative arrays is insertion order
+        assertThat(result.stdout()).isEqualTo("1\n2\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArrayKeysExpansion() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[a]=1; arr[b]=2; for k in ${!arr[@]}; do echo $k; done").join();
+        assertThat(result.stdout()).isEqualTo("a\nb\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArrayStarExpansion() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[a]=1; arr[b]=2; echo ${arr[*]}").join();
+        assertThat(result.stdout()).isEqualTo("1 2\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArrayKeysStar() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[a]=1; arr[b]=2; echo ${!arr[*]}").join();
+        assertThat(result.stdout()).isEqualTo("a b\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArraySubshellIsolation() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[x]=outer; (arr[x]=inner; echo ${arr[x]}); echo ${arr[x]}").join();
+        assertThat(result.stdout()).isEqualTo("inner\nouter\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void associativeArrayDeclarePrint() {
+        Bash bash = new Bash();
+        var result = bash.exec("declare -A arr; arr[x]=1; declare -p arr").join();
+        // declare -p should show the -A attribute
+        assertThat(result.stdout()).contains("-A");
+        bash.shutdown();
+    }
+
+    // [[ ]] Conditional Expressions
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void conditionalTruthyWord() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ hello ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalFalsyEmptyWord() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=; [[ $x ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("1\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalUnaryN() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ -n hello ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalUnaryZ() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ -z \"\" ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalBinaryEqual() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ hello == hello ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalBinaryNotEqual() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ hello != world ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalBinaryLessThan() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ a < b ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalBinaryGreaterThan() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ b > a ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalNot() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ ! false ]]; echo $?").join();
+        // 'false' as a string is non-empty (truthy), so !false is false
+        assertThat(result.stdout()).isEqualTo("1\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalAnd() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ hello && world ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalOr() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ \"\" || hello ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalGroup() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ ( \"\" ) ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("1\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalRegexMatch() {
+        Bash bash = new Bash();
+        var result = bash.exec("[[ hello =~ h.*o ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalFileExists() {
+        Bash bash = new Bash();
+        bash.exec("echo test > file.txt").join();
+        var result = bash.exec("[[ -f file.txt ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void conditionalComplex() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=5; [[ $x -eq 5 && $x -lt 10 ]]; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("0\n");
+        bash.shutdown();
+    }
+
+    // ─── Here-doc tests ───
+
+    @Test
+    void heredocBasic() {
+        Bash bash = new Bash();
+        var result = bash.exec("read x <<EOF\nhello\nEOF\necho $x").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void heredocEmpty() {
+        Bash bash = new Bash();
+        var result = bash.exec("read x <<EOF\nEOF\necho $x").join();
+        assertThat(result.stdout()).isEqualTo("\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void heredocQuotedDelimiterNoExpansion() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=hello; read line <<'EOF'\n$x\nEOF\necho $line").join();
+        assertThat(result.stdout()).isEqualTo("$x\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void heredocVariableExpansion() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=hello; read line <<EOF\n$x\nEOF\necho $line").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void heredocStripTabs() {
+        Bash bash = new Bash();
+        var result = bash.exec("read line <<-EOF\n\thello\n\tEOF\necho $line").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void heredocWithOutputRedirect() {
+        Bash bash = new Bash();
+        var result = bash.exec("read line <<EOF > out.txt\nhello\nEOF\necho $line").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void heredocMultiWordLine() {
+        Bash bash = new Bash();
+        var result = bash.exec("read a b <<EOF\nhello world\nEOF\necho $a $b").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        bash.shutdown();
+    }
+
+    // ─── Process substitution tests ───
+
+    @Test
+    void processSubstitutionInput() {
+        Bash bash = new Bash();
+        var result = bash.exec("read x < <(echo hello)\necho $x").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void processSubstitutionInputMultiWord() {
+        Bash bash = new Bash();
+        var result = bash.exec("read a b < <(echo hello world)\necho $a $b").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void processSubstitutionInputWithCommand() {
+        Bash bash = new Bash();
+        var result = bash.exec("x=world; read line < <(echo hello $x)\necho $line").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void processSubstitutionOutput() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo hello > >(read x; echo $x > out.txt)\nread y < out.txt\necho $y").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void processSubstitutionSource() {
+        Bash bash = new Bash();
+        var result = bash.exec("source <(echo x=42)\necho $x").join();
+        assertThat(result.stdout()).isEqualTo("42\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void processSubstitutionOutputMultiWord() {
+        Bash bash = new Bash();
+        var result = bash.exec("echo 'hello world' > >(read a b; echo $a > out1.txt; echo $b > out2.txt)\nread x < out1.txt\nread y < out2.txt\necho $x $y").join();
+        assertThat(result.stdout()).isEqualTo("hello world\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void processSubstitutionOutputWithVariable() {
+        Bash bash = new Bash();
+        var result = bash.exec("msg=hello\necho $msg > >(read x; echo got $x > out.txt)\nread line < out.txt\necho $line").join();
+        assertThat(result.stdout()).isEqualTo("got hello\n");
+        bash.shutdown();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Pipeline FD management tests (Phase 8)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    @Test
+    void pipelineSubshellVariableIsolation() {
+        Bash bash = new Bash();
+        // Variable set in one pipeline segment should not leak to the next
+        var result = bash.exec("echo hello | x=5\necho $x").join();
+        assertThat(result.stdout()).isEqualTo("\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelineSubshellCdIsolation() {
+        Bash bash = new Bash();
+        // cd in one pipeline segment should not affect the parent
+        var result = bash.exec("echo hello | cd /tmp\npwd").join();
+        assertThat(result.stdout()).isEqualTo("/home/user\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelineVariableStillVisibleToFirstCommand() {
+        Bash bash = new Bash();
+        // Variables set before the pipeline should be visible inside all segments
+        var result = bash.exec("x=hello\necho $x | echo $x").join();
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelinePipeAmpersandStderrPiped() {
+        Bash bash = new Bash();
+        // |& pipes stderr: redirect stdout to stderr, then pipe it via |&
+        // echo hello >&2 sends "hello\n" to stderr (no stdout)
+        // |& pipes that stderr to the next command's stdin
+        var result = bash.exec("echo hello >&2 |& (read line; echo got $line > /tmp/ps_out.txt)\nread y < /tmp/ps_out.txt\necho $y").join();
+        assertThat(result.stdout()).isEqualTo("got hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelinePipeAmpersandStderrNotInPipelineStderr() {
+        Bash bash = new Bash();
+        // With |&, stderr is consumed by the pipe, not in pipeline stderr
+        var result = bash.exec("nonexistent1 |& nonexistent2").join();
+        // nonexistent1's stderr goes to nonexistent2's stdin (and produces no stderr itself)
+        // nonexistent2's stderr appears in pipeline stderr
+        assertThat(result.stderr()).doesNotContain("nonexistent1");
+        assertThat(result.stderr()).contains("nonexistent2");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelinePipeAmpersandWithBuiltin() {
+        Bash bash = new Bash();
+        // |& with builtins: both stdout and stderr go to next command's stdin
+        var result = bash.exec("(echo hello; echo world >&2) |& (read line; echo $line > /tmp/ps_out2.txt)\nread y < /tmp/ps_out2.txt\necho $y").join();
+        // read gets "hello\nworld\n" on stdin, reads "hello" (first line)
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelinePipeStatusWithAmpersand() {
+        Bash bash = new Bash();
+        var result = bash.exec("true |& false | true; echo $PIPESTATUS").join();
+        assertThat(result.stdout()).isEqualTo("(0 1 0)\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelinePipefailWithAmpersand() {
+        Bash bash = new Bash();
+        bash.exec("set -o pipefail").join();
+        var result = bash.exec("true |& false | true; echo $?").join();
+        assertThat(result.stdout()).isEqualTo("1\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelinePipeAmpersandMixedWithRegularPipe() {
+        Bash bash = new Bash();
+        // cmd1 |& cmd2 | cmd3: cmd1's stdout+stderr -> cmd2, cmd2's stdout -> cmd3
+        // Use non-keyword words to avoid lexer classification issues
+        var result = bash.exec("(echo hello; echo world) |& echo result").join();
+        assertThat(result.stdout()).isEqualTo("result\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void pipelineStderrAccumulatedWithRegularPipe() {
+        Bash bash = new Bash();
+        // Regular | does not pipe stderr, so both commands' stderr accumulates
+        var result = bash.exec("nonexistent1 | nonexistent2").join();
+        assertThat(result.stderr()).contains("nonexistent1");
+        assertThat(result.stderr()).contains("nonexistent2");
+        bash.shutdown();
+    }
 }

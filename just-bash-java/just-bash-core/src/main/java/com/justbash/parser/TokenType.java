@@ -18,15 +18,19 @@ public enum TokenType {
     LESSGREAT, // <>
     DLESSDASH, // <<-
     CLOBBER,   // >|
+    TRIPLE_LESS, // <<<
 
     SEMI,      // ;
     PIPE,      // |
+    PIPE_AMPERSAND, // |&
     LPAREN,    // (
     RPAREN,    // )
     LESS,      // <
     GREAT,     // >
     LBRACE,    // {
     RBRACE,    // }
+    DLBRACKET, // [[
+    DRBRACKET, // ]]
     BANG,      // !
 
     IF, THEN, ELSE, ELIF, FI,

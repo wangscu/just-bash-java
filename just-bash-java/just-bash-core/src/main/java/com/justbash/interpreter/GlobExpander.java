@@ -73,7 +73,7 @@ public class GlobExpander {
         return hasBracket || inBracket;
     }
 
-    private static boolean globMatch(String text, String pattern) {
+    public static boolean globMatch(String text, String pattern) {
         StringBuilder regex = new StringBuilder();
         boolean inBracket = false;
 

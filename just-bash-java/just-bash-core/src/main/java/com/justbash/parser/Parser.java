@@ -2,8 +2,8 @@ package com.justbash.parser;
 
 import com.justbash.ast.*;
 import com.justbash.ast.command.*;
-import com.justbash.ast.expression.ArithmeticExpressionNode;
-import com.justbash.ast.operations.ParameterOperation;
+import com.justbash.ast.expression.*;
+import com.justbash.ast.operations.*;
 import com.justbash.ast.word.*;
 import com.justbash.interpreter.errors.ParseException;
 import java.util.ArrayList;
@@ -12,25 +12,43 @@ import java.util.Optional;
 
 public class Parser {
     private final List<Token> tokens;
+    private final List<HereDocNode> heredocs;
     private int pos = 0;
+    private int heredocIndex = 0;
 
     public Parser(List<Token> tokens) {
+        this(tokens, List.of());
+    }
+
+    public Parser(List<Token> tokens, List<HereDocNode> heredocs) {
         this.tokens = tokens;
+        this.heredocs = heredocs;
     }
 
     public static ScriptNode parse(String input) {
         Lexer lexer = new Lexer(input);
-        Parser parser = new Parser(lexer.tokenize());
+        List<Token> tokens = lexer.tokenize();
+        Parser parser = new Parser(tokens, lexer.getHeredocs());
         return parser.parseScript();
+    }
+
+    /** Parse a single word value into a WordNode (for heredoc body expansion). */
+    public static WordNode parseWord(String value, int line) {
+        return new Parser(List.of()).parseWordValue(value, line);
     }
 
     public ScriptNode parseScript() {
         List<StatementNode> statements = new ArrayList<>();
         while (!check(TokenType.EOF)) {
+            int before = pos;
             StatementNode stmt = parseStatement();
             if (stmt != null) statements.add(stmt);
             if (match(TokenType.NEWLINE)) {
                 // skip extra newlines
+            }
+            if (pos == before) {
+                // Parser didn't advance — consume token to avoid infinite loop
+                advance();
             }
         }
         return new ScriptNode(1, statements);
@@ -58,11 +76,22 @@ public class Parser {
     private PipelineNode parsePipeline() {
         boolean negated = match(TokenType.BANG);
         List<CommandNode> commands = new ArrayList<>();
+        List<Boolean> pipeStderr = new ArrayList<>();
         commands.add(parseCommand());
-        while (match(TokenType.PIPE)) {
-            commands.add(parseCommand());
+        while (true) {
+            if (match(TokenType.PIPE)) {
+                commands.add(parseCommand());
+                pipeStderr.add(false);
+            } else if (match(TokenType.PIPE_AMPERSAND)) {
+                commands.add(parseCommand());
+                pipeStderr.add(true);
+            } else {
+                break;
+            }
         }
-        return new PipelineNode(current().line(), commands, negated);
+        Optional<List<Boolean>> pipeStderrOpt = pipeStderr.isEmpty()
+            ? Optional.empty() : Optional.of(pipeStderr);
+        return new PipelineNode(current().line(), commands, negated, false, false, pipeStderrOpt);
     }
 
     private CommandNode parseCommand() {
@@ -75,6 +104,7 @@ public class Parser {
         if (check(TokenType.LPAREN) && pos + 1 < tokens.size() && tokens.get(pos + 1).type() == TokenType.LPAREN) {
             return parseArithmeticCommand();
         }
+        if (check(TokenType.DLBRACKET)) return parseConditionalCommand();
         if (check(TokenType.LPAREN)) return parseSubshell();
         if (check(TokenType.LBRACE)) return parseGroup();
         return parseSimpleCommand();
@@ -228,6 +258,102 @@ public class Parser {
         skipNewlines();
         expect(TokenType.RPAREN);
         return new SubshellNode(line, body, List.of());
+    }
+
+    private ConditionalCommandNode parseConditionalCommand() {
+        int line = current().line();
+        expect(TokenType.DLBRACKET);
+        ConditionalExpressionNode expr = parseCondOr();
+        expect(TokenType.DRBRACKET);
+        return new ConditionalCommandNode(line, expr, List.of());
+    }
+
+    // Conditional expression parsing: || (lowest precedence)
+    private ConditionalExpressionNode parseCondOr() {
+        ConditionalExpressionNode left = parseCondAnd();
+        while (match(TokenType.OR_IF)) {
+            ConditionalExpressionNode right = parseCondAnd();
+            left = new CondOrNode(current().line(), left, right);
+        }
+        return left;
+    }
+
+    // &&
+    private ConditionalExpressionNode parseCondAnd() {
+        ConditionalExpressionNode left = parseCondNot();
+        while (match(TokenType.AND_IF)) {
+            ConditionalExpressionNode right = parseCondNot();
+            left = new CondAndNode(current().line(), left, right);
+        }
+        return left;
+    }
+
+    // !
+    private ConditionalExpressionNode parseCondNot() {
+        if (check(TokenType.BANG)) {
+            advance();
+            return new CondNotNode(current().line(), parseCondNot());
+        }
+        return parseCondPrimary();
+    }
+
+    // Primary: ( expr ), unary test, binary test, or word
+    private ConditionalExpressionNode parseCondPrimary() {
+        int line = current().line();
+
+        if (match(TokenType.LPAREN)) {
+            ConditionalExpressionNode expr = parseCondOr();
+            expect(TokenType.RPAREN);
+            return new CondGroupNode(line, expr);
+        }
+
+        WordNode word = parseWord();
+
+        // Check for unary test: -n word, -z word, -f word, etc.
+        String wordValue = wordToString(word);
+        if (wordValue.startsWith("-") && wordValue.length() == 2 &&
+            check(TokenType.WORD)) {
+            WordNode operand = parseWord();
+            return new CondUnaryNode(line, wordValue, operand);
+        }
+
+        // Check for binary test: ==, !=, =~, -eq, -ne, etc.
+        if (check(TokenType.WORD)) {
+            String nextWord = current().value();
+            if (nextWord.equals("==") || nextWord.equals("!=") ||
+                nextWord.equals("=~") || nextWord.equals("-eq") ||
+                nextWord.equals("-ne") || nextWord.equals("-lt") ||
+                nextWord.equals("-le") || nextWord.equals("-gt") ||
+                nextWord.equals("-ge") || nextWord.equals("-ef") ||
+                nextWord.equals("-nt") || nextWord.equals("-ot")) {
+                advance(); // consume operator
+                WordNode right = parseWord();
+                return new CondBinaryNode(line, nextWord, word, right);
+            }
+        }
+        // < and > are tokenized as LESS/GREAT, not WORD
+        if (check(TokenType.LESS)) {
+            advance();
+            WordNode right = parseWord();
+            return new CondBinaryNode(line, "<", word, right);
+        }
+        if (check(TokenType.GREAT)) {
+            advance();
+            WordNode right = parseWord();
+            return new CondBinaryNode(line, ">", word, right);
+        }
+
+        // Just a word - truthy if non-empty after expansion
+        return new CondWordNode(line, word);
+    }
+
+    // Helper to extract raw string from a simple WordNode
+    private String wordToString(WordNode word) {
+        StringBuilder sb = new StringBuilder();
+        for (WordPart part : word.parts()) {
+            if (part instanceof LiteralPart lp) sb.append(lp.value());
+        }
+        return sb.toString();
     }
 
     private CaseNode parseCase() {
@@ -505,6 +631,32 @@ public class Parser {
                 WordNode target = parseWord();
                 redirections.add(newRedir(previous().line(),
                     fd.orElse(1), RedirectionNode.RedirectionOperator.GTPipe, target));
+            } else if (match(TokenType.TRIPLE_LESS)) {
+                WordNode target = parseWord();
+                redirections.add(newRedir(previous().line(),
+                    fd.orElse(0), RedirectionNode.RedirectionOperator.HERESTRING, target));
+            } else if (check(TokenType.DLESS) || check(TokenType.DLESSDASH)) {
+                TokenType opType = advance().type();
+                Token delimToken = expect(TokenType.WORD);
+                RedirectionNode.RedirectionOperator op =
+                    opType == TokenType.DLESSDASH
+                        ? RedirectionNode.RedirectionOperator.HEREDOC_STRIP
+                        : RedirectionNode.RedirectionOperator.HEREDOC;
+                if (heredocIndex < heredocs.size()) {
+                    HereDocNode hereDoc = heredocs.get(heredocIndex++);
+                    redirections.add(new RedirectionNode(delimToken.line(),
+                        Optional.of(fd.orElse(0)), Optional.empty(), op,
+                        new RedirectionNode.HereDocTarget(hereDoc)));
+                } else {
+                    // No heredoc body collected - create empty one
+                    WordNode emptyContent = new WordNode(delimToken.line(),
+                        List.of(new LiteralPart(delimToken.line(), "")));
+                    HereDocNode emptyDoc = new HereDocNode(delimToken.line(),
+                        delimToken.value(), emptyContent, opType == TokenType.DLESSDASH, false);
+                    redirections.add(new RedirectionNode(delimToken.line(),
+                        Optional.of(fd.orElse(0)), Optional.empty(), op,
+                        new RedirectionNode.HereDocTarget(emptyDoc)));
+                }
             } else {
                 break;
             }
@@ -522,7 +674,8 @@ public class Parser {
         return type == TokenType.GREAT || type == TokenType.DGREAT
             || type == TokenType.LESS || type == TokenType.GREATAND
             || type == TokenType.LESSAND || type == TokenType.LESSGREAT
-            || type == TokenType.CLOBBER;
+            || type == TokenType.CLOBBER || type == TokenType.TRIPLE_LESS
+            || type == TokenType.DLESS || type == TokenType.DLESSDASH;
     }
 
     private boolean isFdPrefixForRedirect() {
@@ -609,7 +762,13 @@ public class Parser {
                         parts.add(new ParameterExpansionPart(line, value.substring(paramStart + 1, paramEnd), Optional.empty()));
                         i = paramEnd;
                     } else {
-                        parts.add(new ParameterExpansionPart(line, value.substring(paramStart + 1, closeBrace), Optional.empty()));
+                        String content = value.substring(paramStart + 1, closeBrace);
+                        Optional<ParameterExpansionPart> parsed = parseBracedParameterExpansion(line, content);
+                        if (parsed.isPresent()) {
+                            parts.add(parsed.get());
+                        } else {
+                            parts.add(new ParameterExpansionPart(line, content, Optional.empty()));
+                        }
                         i = closeBrace + 1;
                     }
                 } else {
@@ -631,12 +790,25 @@ public class Parser {
                         }
                     }
                 }
+            } else if ((c == '<' || c == '>') && i + 2 < value.length()
+                       && value.charAt(i + 1) == '(') {
+                // Process substitution <(...) or >(...)
+                int end = findMatchingParen(value, i + 2);
+                String inner = value.substring(i + 2, end);
+                ScriptNode body = Parser.parse(inner);
+                ProcessSubstitutionPart.Direction dir = c == '<'
+                    ? ProcessSubstitutionPart.Direction.INPUT
+                    : ProcessSubstitutionPart.Direction.OUTPUT;
+                parts.add(new ProcessSubstitutionPart(line, body, dir));
+                i = end + 1;
             } else {
                 int end = i;
                 while (end < value.length()
                        && value.charAt(end) != '\''
                        && value.charAt(end) != '"'
-                       && value.charAt(end) != '$') {
+                       && value.charAt(end) != '$'
+                       && value.charAt(end) != '<'
+                       && value.charAt(end) != '>') {
                     end++;
                 }
                 if (end > i) {
@@ -646,6 +818,210 @@ public class Parser {
             }
         }
         return new WordNode(line, parts);
+    }
+
+    // Parse content inside ${...} to extract parameter name and optional operation
+    private Optional<ParameterExpansionPart> parseBracedParameterExpansion(int line, String content) {
+        // Length operators like ${#var}, ${#arr[@]} are handled by existing logic
+        if (content.startsWith("#") && !hasOperatorAfterParam(content.substring(1))) {
+            return Optional.empty();
+        }
+
+        // Array keys: ${!arr[@]} or ${!arr[*]}
+        if (content.startsWith("!")) {
+            String afterBang = content.substring(1);
+            int bracketPos = afterBang.indexOf('[');
+            if (bracketPos > 0 && afterBang.endsWith("]")) {
+                String arrName = afterBang.substring(0, bracketPos);
+                String indexStr = afterBang.substring(bracketPos + 1, afterBang.length() - 1);
+                if (indexStr.equals("@") || indexStr.equals("*")) {
+                    boolean star = indexStr.equals("*");
+                    return Optional.of(new ParameterExpansionPart(line, "!" + arrName,
+                        Optional.of(new ArrayKeysOp(arrName, star))));
+                }
+            }
+        }
+
+        int paramEnd = findParamEnd(content);
+        if (paramEnd == 0) return Optional.empty();
+
+        String parameter = content.substring(0, paramEnd);
+        String rest = content.substring(paramEnd);
+
+        if (rest.isEmpty()) return Optional.empty();
+
+        char first = rest.charAt(0);
+
+        // Pattern removal: #, ##
+        if (first == '#') {
+            boolean greedy = rest.startsWith("##");
+            String patternStr = greedy ? rest.substring(2) : rest.substring(1);
+            WordNode pattern = parseWordValue(patternStr, line);
+            return Optional.of(new ParameterExpansionPart(line, parameter,
+                Optional.of(new PatternRemovalOp(pattern, PatternRemovalOp.PatternSide.PREFIX, greedy))));
+        }
+
+        // Pattern removal: %, %%
+        if (first == '%') {
+            boolean greedy = rest.startsWith("%%");
+            String patternStr = greedy ? rest.substring(2) : rest.substring(1);
+            WordNode pattern = parseWordValue(patternStr, line);
+            return Optional.of(new ParameterExpansionPart(line, parameter,
+                Optional.of(new PatternRemovalOp(pattern, PatternRemovalOp.PatternSide.SUFFIX, greedy))));
+        }
+
+        // Pattern replacement: /, //, /#/, /%/
+        if (first == '/') {
+            boolean all = rest.startsWith("//");
+            String afterSlash = all ? rest.substring(2) : rest.substring(1);
+
+            Optional<PatternReplacementOp.Anchor> anchor = Optional.empty();
+            if (afterSlash.startsWith("#")) {
+                anchor = Optional.of(PatternReplacementOp.Anchor.START);
+                afterSlash = afterSlash.substring(1);
+            } else if (afterSlash.startsWith("%")) {
+                anchor = Optional.of(PatternReplacementOp.Anchor.END);
+                afterSlash = afterSlash.substring(1);
+            }
+
+            int secondSlash = afterSlash.indexOf('/');
+            WordNode pattern;
+            Optional<WordNode> replacement = Optional.empty();
+            if (secondSlash >= 0) {
+                pattern = parseWordValue(afterSlash.substring(0, secondSlash), line);
+                replacement = Optional.of(parseWordValue(afterSlash.substring(secondSlash + 1), line));
+            } else {
+                pattern = parseWordValue(afterSlash, line);
+            }
+            return Optional.of(new ParameterExpansionPart(line, parameter,
+                Optional.of(new PatternReplacementOp(pattern, replacement, all, anchor))));
+        }
+
+        // Case modification: ^, ^^
+        if (first == '^') {
+            boolean all = rest.startsWith("^^");
+            String patternStr = all ? rest.substring(2) : rest.substring(1);
+            Optional<WordNode> pattern = patternStr.isEmpty() ? Optional.empty()
+                : Optional.of(parseWordValue(patternStr, line));
+            return Optional.of(new ParameterExpansionPart(line, parameter,
+                Optional.of(new CaseModificationOp(CaseModificationOp.Direction.UPPER, all, pattern))));
+        }
+
+        // Case modification: ,, ,
+        if (first == ',') {
+            boolean all = rest.startsWith(",,");
+            String patternStr = all ? rest.substring(2) : rest.substring(1);
+            Optional<WordNode> pattern = patternStr.isEmpty() ? Optional.empty()
+                : Optional.of(parseWordValue(patternStr, line));
+            return Optional.of(new ParameterExpansionPart(line, parameter,
+                Optional.of(new CaseModificationOp(CaseModificationOp.Direction.LOWER, all, pattern))));
+        }
+
+        // Substring and default-value operators starting with :
+        if (first == ':') {
+            if (rest.length() >= 2) {
+                char second = rest.charAt(1);
+                String operandStr = rest.substring(2);
+                WordNode operand = operandStr.isEmpty() ? new WordNode(line, List.of())
+                    : parseWordValue(operandStr, line);
+                switch (second) {
+                    case '-' -> {
+                        return Optional.of(new ParameterExpansionPart(line, parameter,
+                            Optional.of(new DefaultValueOp(operand, true))));
+                    }
+                    case '=' -> {
+                        return Optional.of(new ParameterExpansionPart(line, parameter,
+                            Optional.of(new AssignDefaultOp(operand, true))));
+                    }
+                    case '?' -> {
+                        return Optional.of(new ParameterExpansionPart(line, parameter,
+                            Optional.of(new ErrorIfUnsetOp(operandStr.isEmpty() ? Optional.empty() : Optional.of(operand), true))));
+                    }
+                    case '+' -> {
+                        return Optional.of(new ParameterExpansionPart(line, parameter,
+                            Optional.of(new UseAlternativeOp(operand, true))));
+                    }
+                }
+            }
+            // Substring operator :offset or :offset:length
+            String substrContent = rest.substring(1);
+            int secondColon = substrContent.indexOf(':');
+            String offsetStr = secondColon >= 0 ? substrContent.substring(0, secondColon) : substrContent;
+            String lengthStr = secondColon >= 0 ? substrContent.substring(secondColon + 1) : "";
+            try {
+                var offsetExpr = ArithmeticParser.parse(offsetStr, line);
+                Optional<com.justbash.ast.expression.ArithExpr> lengthExpr = lengthStr.isEmpty() ? Optional.empty()
+                    : Optional.of(ArithmeticParser.parse(lengthStr, line));
+                return Optional.of(new ParameterExpansionPart(line, parameter,
+                    Optional.of(new SubstringOp(offsetExpr, lengthExpr))));
+            } catch (Exception e) {
+                return Optional.empty();
+            }
+        }
+
+        // Default-value operators without leading :
+        switch (first) {
+            case '-' -> {
+                WordNode operand = parseWordValue(rest.substring(1), line);
+                return Optional.of(new ParameterExpansionPart(line, parameter,
+                    Optional.of(new DefaultValueOp(operand, false))));
+            }
+            case '=' -> {
+                WordNode operand = parseWordValue(rest.substring(1), line);
+                return Optional.of(new ParameterExpansionPart(line, parameter,
+                    Optional.of(new AssignDefaultOp(operand, false))));
+            }
+            case '?' -> {
+                String operandStr = rest.substring(1);
+                WordNode operand = operandStr.isEmpty() ? new WordNode(line, List.of())
+                    : parseWordValue(operandStr, line);
+                return Optional.of(new ParameterExpansionPart(line, parameter,
+                    Optional.of(new ErrorIfUnsetOp(operandStr.isEmpty() ? Optional.empty() : Optional.of(operand), false))));
+            }
+            case '+' -> {
+                WordNode operand = parseWordValue(rest.substring(1), line);
+                return Optional.of(new ParameterExpansionPart(line, parameter,
+                    Optional.of(new UseAlternativeOp(operand, false))));
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private int findParamEnd(String content) {
+        int i = 0;
+        if (i >= content.length()) return 0;
+
+        char first = content.charAt(i);
+        // Positional parameter number
+        if (Character.isDigit(first)) {
+            while (i < content.length() && Character.isDigit(content.charAt(i))) i++;
+            return i;
+        }
+        // Special parameter
+        if ("@*#?-$!0".indexOf(first) >= 0) {
+            return 1;
+        }
+        // Variable name
+        if (!Character.isLetter(first) && first != '_') return 0;
+        while (i < content.length() && (Character.isLetterOrDigit(content.charAt(i)) || content.charAt(i) == '_')) {
+            i++;
+        }
+        // Array subscript
+        if (i < content.length() && content.charAt(i) == '[') {
+            int bracketEnd = content.indexOf(']', i);
+            if (bracketEnd != -1) {
+                i = bracketEnd + 1;
+            }
+        }
+        return i;
+    }
+
+    private boolean hasOperatorAfterParam(String content) {
+        int paramEnd = findParamEnd(content);
+        if (paramEnd >= content.length()) return false;
+        char c = content.charAt(paramEnd);
+        return "#%^,/:-=?+".indexOf(c) >= 0;
     }
 
     private boolean checkAssignment() {
@@ -720,7 +1096,8 @@ public class Parser {
     private boolean canStartCommand() {
         return check(TokenType.WORD, TokenType.IF, TokenType.FOR, TokenType.WHILE,
                      TokenType.UNTIL, TokenType.CASE, TokenType.FUNCTION, TokenType.LPAREN,
-                     TokenType.LBRACE, TokenType.BANG);
+                     TokenType.LBRACE, TokenType.BANG, TokenType.DLBRACKET,
+                     TokenType.TIME);
     }
 
     private boolean canStartStatement() {

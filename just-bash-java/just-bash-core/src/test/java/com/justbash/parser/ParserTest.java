@@ -1,5 +1,6 @@
 package com.justbash.parser;
 
+import com.justbash.ast.RedirectionNode;
 import com.justbash.ast.ScriptNode;
 import com.justbash.ast.StatementNode;
 import com.justbash.ast.PipelineNode;
@@ -131,5 +132,41 @@ class ParserTest {
         FunctionDefNode func = (FunctionDefNode) ast.statements().get(0).pipelines().get(0).commands().get(0);
         assertThat(func.name()).isEqualTo("bar");
         assertThat(func.body()).isInstanceOf(GroupNode.class);
+    }
+
+    @Test
+    void parseHeredoc() {
+        ScriptNode ast = Parser.parse("cat <<EOF\nhello\nEOF");
+        SimpleCommandNode cmd = (SimpleCommandNode)
+            ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(cmd.redirections()).hasSize(1);
+        RedirectionNode redir = cmd.redirections().get(0);
+        assertThat(redir.operator()).isEqualTo(RedirectionNode.RedirectionOperator.HEREDOC);
+        assertThat(redir.target()).isInstanceOf(RedirectionNode.HereDocTarget.class);
+        var hereDoc = ((RedirectionNode.HereDocTarget) redir.target()).hereDoc();
+        assertThat(hereDoc.delimiter()).isEqualTo("EOF");
+        assertThat(hereDoc.stripTabs()).isFalse();
+        assertThat(hereDoc.quoted()).isFalse();
+    }
+
+    @Test
+    void parseHeredocStripTabs() {
+        ScriptNode ast = Parser.parse("cat <<-EOF\nhello\nEOF");
+        SimpleCommandNode cmd = (SimpleCommandNode)
+            ast.statements().get(0).pipelines().get(0).commands().get(0);
+        assertThat(cmd.redirections()).hasSize(1);
+        RedirectionNode redir = cmd.redirections().get(0);
+        assertThat(redir.operator()).isEqualTo(RedirectionNode.RedirectionOperator.HEREDOC_STRIP);
+        var hereDoc = ((RedirectionNode.HereDocTarget) redir.target()).hereDoc();
+        assertThat(hereDoc.stripTabs()).isTrue();
+    }
+
+    @Test
+    void parseHeredocQuotedDelimiter() {
+        ScriptNode ast = Parser.parse("cat <<'EOF'\nhello\nEOF");
+        SimpleCommandNode cmd = (SimpleCommandNode)
+            ast.statements().get(0).pipelines().get(0).commands().get(0);
+        var hereDoc = ((RedirectionNode.HereDocTarget) cmd.redirections().get(0).target()).hereDoc();
+        assertThat(hereDoc.quoted()).isTrue();
     }
 }
