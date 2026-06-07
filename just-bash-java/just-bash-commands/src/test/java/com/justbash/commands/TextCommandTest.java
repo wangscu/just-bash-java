@@ -5,8 +5,12 @@ import com.justbash.BashExecResult;
 import com.justbash.BashOptions;
 import com.justbash.ExecResult;
 import com.justbash.commands.awk.AwkCommand;
+import com.justbash.commands.base64.Base64Command;
+import com.justbash.commands.basename.BasenameCommand;
 import com.justbash.commands.cat.CatCommand;
+import com.justbash.commands.dirname.DirnameCommand;
 import com.justbash.commands.chmod.ChmodCommand;
+import com.justbash.commands.clear.ClearCommand;
 import com.justbash.commands.column.ColumnCommand;
 import com.justbash.commands.comm.CommCommand;
 import com.justbash.commands.cut.CutCommand;
@@ -24,10 +28,13 @@ import com.justbash.commands.ls.LsCommand;
 import com.justbash.commands.nl.NlCommand;
 import com.justbash.commands.paste.PasteCommand;
 import com.justbash.commands.printf.PrintfCommand;
+import com.justbash.commands.readlink.ReadlinkCommand;
 import com.justbash.commands.rev.RevCommand;
 import com.justbash.commands.rg.RgCommand;
+import com.justbash.commands.rmdir.RmdirCommand;
 import com.justbash.commands.sed.SedCommand;
 import com.justbash.commands.seq.SeqCommand;
+import com.justbash.commands.sleep.SleepCommand;
 import com.justbash.commands.sort.SortCommand;
 import com.justbash.commands.split.SplitCommand;
 import com.justbash.commands.tail.TailCommand;
@@ -53,8 +60,12 @@ class TextCommandTest {
             java.util.Optional.empty(), java.util.Optional.empty()
         ));
         bash.registerCommand(new AwkCommand());
+        bash.registerCommand(new Base64Command());
+        bash.registerCommand(new BasenameCommand());
         bash.registerCommand(new CatCommand());
+        bash.registerCommand(new DirnameCommand());
         bash.registerCommand(new ChmodCommand());
+        bash.registerCommand(new ClearCommand());
         bash.registerCommand(new ColumnCommand());
         bash.registerCommand(new CommCommand());
         bash.registerCommand(new CutCommand());
@@ -72,10 +83,13 @@ class TextCommandTest {
         bash.registerCommand(new NlCommand());
         bash.registerCommand(new PasteCommand());
         bash.registerCommand(new PrintfCommand());
+        bash.registerCommand(new ReadlinkCommand());
         bash.registerCommand(new RevCommand());
         bash.registerCommand(new RgCommand());
+        bash.registerCommand(new RmdirCommand());
         bash.registerCommand(new SedCommand());
         bash.registerCommand(new SeqCommand());
+        bash.registerCommand(new SleepCommand());
         bash.registerCommand(new SortCommand());
         bash.registerCommand(new SplitCommand());
         bash.registerCommand(new TailCommand());
@@ -97,8 +111,12 @@ class TextCommandTest {
             java.util.Optional.empty(), java.util.Optional.empty()
         ));
         bash.registerCommand(new AwkCommand());
+        bash.registerCommand(new Base64Command());
+        bash.registerCommand(new BasenameCommand());
         bash.registerCommand(new CatCommand());
+        bash.registerCommand(new DirnameCommand());
         bash.registerCommand(new ChmodCommand());
+        bash.registerCommand(new ClearCommand());
         bash.registerCommand(new ColumnCommand());
         bash.registerCommand(new CommCommand());
         bash.registerCommand(new CutCommand());
@@ -116,10 +134,13 @@ class TextCommandTest {
         bash.registerCommand(new NlCommand());
         bash.registerCommand(new PasteCommand());
         bash.registerCommand(new PrintfCommand());
+        bash.registerCommand(new ReadlinkCommand());
         bash.registerCommand(new RevCommand());
         bash.registerCommand(new RgCommand());
+        bash.registerCommand(new RmdirCommand());
         bash.registerCommand(new SedCommand());
         bash.registerCommand(new SeqCommand());
+        bash.registerCommand(new SleepCommand());
         bash.registerCommand(new SortCommand());
         bash.registerCommand(new SplitCommand());
         bash.registerCommand(new TailCommand());
@@ -1069,10 +1090,13 @@ class TextCommandTest {
         bash.registerCommand(new NlCommand());
         bash.registerCommand(new PasteCommand());
         bash.registerCommand(new PrintfCommand());
+        bash.registerCommand(new ReadlinkCommand());
         bash.registerCommand(new RevCommand());
         bash.registerCommand(new RgCommand());
+        bash.registerCommand(new RmdirCommand());
         bash.registerCommand(new SedCommand());
         bash.registerCommand(new SeqCommand());
+        bash.registerCommand(new SleepCommand());
         bash.registerCommand(new SortCommand());
         bash.registerCommand(new SplitCommand());
         bash.registerCommand(new TailCommand());
@@ -1175,6 +1199,612 @@ class TextCommandTest {
         ));
         BashExecResult result = bash.exec("awk -f /tmp/awkprog8 /tmp/awk8").join();
         assertThat(result.stdout()).isEqualTo("hello earth\n");
+        bash.shutdown();
+    }
+
+    // ========== base64 ==========
+
+    @Test
+    void base64EncodeStdin() {
+        Bash bash = createBash();
+        BashExecResult result = bash.exec("base64",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("hello\n"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("aGVsbG8K\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64EncodeFile() {
+        Bash bash = createBashWithFile("/tmp/b64test", "hello world");
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 /tmp/b64test").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("aGVsbG8gd29ybGQ=\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64DecodeStdin() {
+        Bash bash = createBash();
+        BashExecResult result = bash.exec("base64 -d",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("aGVsbG8K\n"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("hello\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64DecodeFile() {
+        Bash bash = createBashWithFile("/tmp/b64dec", "aGVsbG8gd29ybGQ=");
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 -d /tmp/b64dec").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("hello world");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64Wrap() {
+        Bash bash = createBashWithFile("/tmp/b64wrap", "hello world");
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 -w 4 /tmp/b64wrap").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("aGVs\nbG8g\nd29y\nbGQ=\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64WrapZero() {
+        Bash bash = createBashWithFile("/tmp/b64wrap0", "hello world");
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 -w 0 /tmp/b64wrap0").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("aGVsbG8gd29ybGQ=");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64FileNotFound() {
+        Bash bash = createBash();
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 /nonexistent").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("No such file or directory");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64InvalidInput() {
+        Bash bash = createBash();
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 -d",
+            new com.justbash.ExecOptions(java.util.Optional.empty(), false, java.util.Optional.empty(),
+                false, java.util.Optional.of("!!!invalid!!!"), java.util.Optional.empty(),
+                java.util.Optional.empty(), java.util.Optional.empty())).join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("invalid input");
+        bash.shutdown();
+    }
+
+    @Test
+    void base64Help() {
+        Bash bash = createBash();
+        bash.registerCommand(new Base64Command());
+        BashExecResult result = bash.exec("base64 --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: base64");
+        bash.shutdown();
+    }
+
+    // ========== basename ==========
+
+    @Test
+    void basenameSimple() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename /usr/bin/sort").join();
+        assertThat(result.stdout()).isEqualTo("sort\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameWithSuffix() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename /usr/bin/sort .txt").join();
+        assertThat(result.stdout()).isEqualTo("sort\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameStripSuffix() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename /usr/bin/sort.txt .txt").join();
+        assertThat(result.stdout()).isEqualTo("sort\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameTrailingSlash() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename /usr/bin/sort/").join();
+        assertThat(result.stdout()).isEqualTo("sort\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameRoot() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename /").join();
+        assertThat(result.stdout()).isEqualTo("/\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameMultipleSlashes() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename /////").join();
+        assertThat(result.stdout()).isEqualTo("/\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameMultipleArgs() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename -a /a/b /c/d/e").join();
+        assertThat(result.stdout()).isEqualTo("b\ne\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameMultipleWithSuffix() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename -a -s .txt /a/b.txt /c/d.txt").join();
+        assertThat(result.stdout()).isEqualTo("b\nd\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameSuffixOption() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename --suffix=.txt /a/b.txt").join();
+        assertThat(result.stdout()).isEqualTo("b\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameMissingOperand() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("missing operand");
+        bash.shutdown();
+    }
+
+    @Test
+    void basenameHelp() {
+        Bash bash = createBash();
+        bash.registerCommand(new BasenameCommand());
+        BashExecResult result = bash.exec("basename --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: basename");
+        bash.shutdown();
+    }
+
+    // ========== dirname ==========
+
+    @Test
+    void dirnameSimple() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname /usr/bin/sort").join();
+        assertThat(result.stdout()).isEqualTo("/usr/bin\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameTrailingSlash() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname /usr/bin/sort/").join();
+        assertThat(result.stdout()).isEqualTo("/usr/bin\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameNoSlash() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname sort").join();
+        assertThat(result.stdout()).isEqualTo(".\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameRoot() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname /").join();
+        assertThat(result.stdout()).isEqualTo("/\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameMultipleSlashes() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname /////").join();
+        assertThat(result.stdout()).isEqualTo("/\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameSingleComponent() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname /usr").join();
+        assertThat(result.stdout()).isEqualTo("/\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameMultipleArgs() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname /a/b /c/d/e").join();
+        assertThat(result.stdout()).isEqualTo("/a\n/c/d\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameMissingOperand() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("missing operand");
+        bash.shutdown();
+    }
+
+    @Test
+    void dirnameHelp() {
+        Bash bash = createBash();
+        bash.registerCommand(new DirnameCommand());
+        BashExecResult result = bash.exec("dirname --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: dirname");
+        bash.shutdown();
+    }
+
+    // ========== clear ==========
+
+    @Test
+    void clearOutputsAnsiSequence() {
+        Bash bash = createBash();
+        bash.registerCommand(new ClearCommand());
+        BashExecResult result = bash.exec("clear").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("[2J[H");
+        bash.shutdown();
+    }
+
+    @Test
+    void clearHelp() {
+        Bash bash = createBash();
+        bash.registerCommand(new ClearCommand());
+        BashExecResult result = bash.exec("clear --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: clear");
+        bash.shutdown();
+    }
+
+    // ========== sleep ==========
+
+    @Test
+    void sleepZero() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep 0").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void sleepSecondsSuffix() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep 0.001s").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void sleepMinutesSuffix() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep 0.0001m").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void sleepMultipleArgs() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep 0.0005 0.0005").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        bash.shutdown();
+    }
+
+    @Test
+    void sleepMissingOperand() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("missing operand");
+        bash.shutdown();
+    }
+
+    @Test
+    void sleepInvalidInterval() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep abc").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("invalid time interval");
+        bash.shutdown();
+    }
+
+    @Test
+    void sleepHelp() {
+        Bash bash = createBash();
+        bash.registerCommand(new SleepCommand());
+        BashExecResult result = bash.exec("sleep --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: sleep");
+        bash.shutdown();
+    }
+
+    // ========== rmdir ==========
+
+    @Test
+    void rmdirRemoveEmptyDir() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.mkdir("/tmp/rmdirtest").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir /tmp/rmdirtest").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(fs.exists("/tmp/rmdirtest").join()).isFalse();
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirNonExistent() {
+        Bash bash = createBash();
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir /nonexistent").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("No such file or directory");
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirNotEmpty() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.mkdir("/tmp/rmdirnotempty").join();
+        fs.writeFile("/tmp/rmdirnotempty/file", new IFileSystem.StringContent("x")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir /tmp/rmdirnotempty").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("Directory not empty");
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirNotADirectory() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/rmdirfile", new IFileSystem.StringContent("x")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir /tmp/rmdirfile").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("Not a directory");
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirParents() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.mkdir("/tmp/rmdirparent/a/b").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir -p /tmp/rmdirparent/a/b").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(fs.exists("/tmp/rmdirparent/a/b").join()).isFalse();
+        assertThat(fs.exists("/tmp/rmdirparent/a").join()).isFalse();
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirVerbose() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.mkdir("/tmp/rmdirverbose").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir -v /tmp/rmdirverbose").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("removing directory");
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirMissingOperand() {
+        Bash bash = createBash();
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("missing operand");
+        bash.shutdown();
+    }
+
+    @Test
+    void rmdirHelp() {
+        Bash bash = createBash();
+        bash.registerCommand(new RmdirCommand());
+        BashExecResult result = bash.exec("rmdir --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: rmdir");
+        bash.shutdown();
+    }
+
+    // ========== readlink ==========
+
+    @Test
+    void readlinkBasic() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/target", new IFileSystem.StringContent("hello")).join();
+        fs.symlink("/tmp/target", "/tmp/link").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink /tmp/link").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("/tmp/target\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void readlinkRelativeTarget() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/target", new IFileSystem.StringContent("hello")).join();
+        fs.symlink("target", "/tmp/link").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink /tmp/link").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("target\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void readlinkCanonicalize() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/target", new IFileSystem.StringContent("hello")).join();
+        fs.symlink("/tmp/target", "/tmp/link").join();
+        fs.symlink("/tmp/link", "/tmp/link2").join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink -f /tmp/link2").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("/tmp/target\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void readlinkNotASymlink() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/target", new IFileSystem.StringContent("hello")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink /tmp/target").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        bash.shutdown();
+    }
+
+    @Test
+    void readlinkCanonicalizeNonSymlink() {
+        InMemoryFs fs = new InMemoryFs();
+        fs.writeFile("/tmp/target", new IFileSystem.StringContent("hello")).join();
+        Bash bash = new Bash(new BashOptions(
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.of(fs), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty(),
+            java.util.Optional.empty(), java.util.Optional.empty()
+        ));
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink -f /tmp/target").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).isEqualTo("/tmp/target\n");
+        bash.shutdown();
+    }
+
+    @Test
+    void readlinkMissingOperand() {
+        Bash bash = createBash();
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink").join();
+        assertThat(result.exitCode()).isEqualTo(1);
+        assertThat(result.stderr()).contains("missing operand");
+        bash.shutdown();
+    }
+
+    @Test
+    void readlinkHelp() {
+        Bash bash = createBash();
+        bash.registerCommand(new ReadlinkCommand());
+        BashExecResult result = bash.exec("readlink --help").join();
+        assertThat(result.exitCode()).isEqualTo(0);
+        assertThat(result.stdout()).contains("Usage: readlink");
         bash.shutdown();
     }
 }

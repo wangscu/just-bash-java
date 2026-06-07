@@ -2,8 +2,12 @@ package com.justbash.commands;
 
 import com.justbash.Bash;
 import com.justbash.commands.awk.AwkCommand;
+import com.justbash.commands.base64.Base64Command;
+import com.justbash.commands.basename.BasenameCommand;
 import com.justbash.commands.cat.CatCommand;
+import com.justbash.commands.dirname.DirnameCommand;
 import com.justbash.commands.chmod.ChmodCommand;
+import com.justbash.commands.clear.ClearCommand;
 import com.justbash.commands.column.ColumnCommand;
 import com.justbash.commands.comm.CommCommand;
 import com.justbash.commands.cp.CpCommand;
@@ -25,11 +29,14 @@ import com.justbash.commands.mv.MvCommand;
 import com.justbash.commands.nl.NlCommand;
 import com.justbash.commands.paste.PasteCommand;
 import com.justbash.commands.printf.PrintfCommand;
+import com.justbash.commands.readlink.ReadlinkCommand;
 import com.justbash.commands.rev.RevCommand;
 import com.justbash.commands.rg.RgCommand;
+import com.justbash.commands.rmdir.RmdirCommand;
 import com.justbash.commands.rm.RmCommand;
 import com.justbash.commands.sed.SedCommand;
 import com.justbash.commands.seq.SeqCommand;
+import com.justbash.commands.sleep.SleepCommand;
 import com.justbash.commands.sort.SortCommand;
 import com.justbash.commands.split.SplitCommand;
 import com.justbash.commands.tail.TailCommand;
@@ -39,13 +46,19 @@ import com.justbash.commands.tree.TreeCommand;
 import com.justbash.commands.uniq.UniqCommand;
 import com.justbash.commands.wc.WcCommand;
 import com.justbash.commands.xargs.XargsCommand;
+import com.justbash.commands.xan.XanCommand;
+import com.justbash.commands.yq.YqCommand;
 
 public class CommandRegistry {
 
     public static void registerAll(Bash bash) {
         bash.registerCommand(new AwkCommand());
+        bash.registerCommand(new Base64Command());
+        bash.registerCommand(new BasenameCommand());
         bash.registerCommand(new CatCommand());
+        bash.registerCommand(new DirnameCommand());
         bash.registerCommand(new ChmodCommand());
+        bash.registerCommand(new ClearCommand());
         bash.registerCommand(new ColumnCommand());
         bash.registerCommand(new CommCommand());
         bash.registerCommand(new CpCommand());
@@ -67,11 +80,14 @@ public class CommandRegistry {
         bash.registerCommand(new NlCommand());
         bash.registerCommand(new PasteCommand());
         bash.registerCommand(new PrintfCommand());
+        bash.registerCommand(new ReadlinkCommand());
         bash.registerCommand(new RevCommand());
         bash.registerCommand(new RgCommand());
+        bash.registerCommand(new RmdirCommand());
         bash.registerCommand(new RmCommand());
         bash.registerCommand(new SedCommand());
         bash.registerCommand(new SeqCommand());
+        bash.registerCommand(new SleepCommand());
         bash.registerCommand(new SortCommand());
         bash.registerCommand(new SplitCommand());
         bash.registerCommand(new TailCommand());
@@ -81,5 +97,7 @@ public class CommandRegistry {
         bash.registerCommand(new UniqCommand());
         bash.registerCommand(new WcCommand());
         bash.registerCommand(new XargsCommand());
+        bash.registerCommand(new XanCommand());
+        bash.registerCommand(new YqCommand());
     }
 }
