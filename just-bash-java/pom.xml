@@ -21,6 +21,7 @@
         <module>just-bash-core</module>
         <module>just-bash-commands</module>
         <module>just-bash-cli</module>
+        <module>just-bash-postgres</module>
     </modules>
 
     <dependencyManagement>
