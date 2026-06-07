@@ -13,6 +13,13 @@ public class TestDbHelper {
     private static PostgreSQLContainer<?> container;
 
     public static synchronized DataSource startPostgres() {
+        String dbUrl = System.getenv("TEST_DATABASE_URL");
+        if (dbUrl != null && !dbUrl.isEmpty()) {
+            org.postgresql.ds.PGSimpleDataSource ds = new org.postgresql.ds.PGSimpleDataSource();
+            ds.setUrl(dbUrl);
+            return ds;
+        }
+
         if (container == null) {
             container = new PostgreSQLContainer<>(
                 DockerImageName.parse("pgvector/pgvector:pg17")
@@ -42,7 +49,7 @@ public class TestDbHelper {
     public static void createFsAppRole(DataSource ds) throws SQLException {
         try (Connection conn = ds.getConnection(); Statement stmt = conn.createStatement()) {
             stmt.execute("DO $$ BEGIN CREATE ROLE fs_app LOGIN; EXCEPTION WHEN duplicate_object THEN NULL; END $$");
-            stmt.execute("GRANT USAGE ON SCHEMA public TO fs_app");
+            stmt.execute("GRANT USAGE, CREATE ON SCHEMA public TO fs_app");
         }
     }
 

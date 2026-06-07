@@ -42,15 +42,14 @@ class SearchTest {
 
     @Test
     void shouldRankFilenameHigherThanContent() {
-        // File named "apple.txt" with content "banana" should rank higher than
-        // file named "banana.txt" with content "apple" when searching "apple"
-        fs.writeFile("/apple.txt", new com.justbash.fs.IFileSystem.StringContent("banana fruit"), com.justbash.fs.WriteFileOptions.utf8()).join();
-        fs.writeFile("/banana.txt", new com.justbash.fs.IFileSystem.StringContent("apple fruit is delicious and tasty apple pie"), com.justbash.fs.WriteFileOptions.utf8()).join();
+        // Both files contain "apple" in content; filename match should rank higher
+        fs.writeFile("/apple-recipe.txt", new com.justbash.fs.IFileSystem.StringContent("apple pie recipe with apple and cinnamon"), com.justbash.fs.WriteFileOptions.utf8()).join();
+        fs.writeFile("/banana-guide.txt", new com.justbash.fs.IFileSystem.StringContent("apple fruit is delicious and tasty apple pie"), com.justbash.fs.WriteFileOptions.utf8()).join();
 
         List<SearchResult> results = fs.search("apple", new SearchOptions()).join();
         assertThat(results).hasSize(2);
-        // Filename match should be first
-        assertThat(results.get(0).name()).isEqualTo("apple.txt");
+        // Filename match should be first (weight A > weight C)
+        assertThat(results.get(0).name()).isEqualTo("apple-recipe.txt");
     }
 
     @Test

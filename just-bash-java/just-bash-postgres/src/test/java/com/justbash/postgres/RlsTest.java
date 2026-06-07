@@ -131,10 +131,14 @@ class RlsTest {
     @Test
     void shouldBlockInsertForWrongSessionAtDatabaseLevel() throws SQLException {
         TestDbHelper.createFsAppRole(dataSource);
+        // Admin sets up schema first
+        PgFileSystem fsAdmin = createFs(1);
+        fsAdmin.writeFile("/seed.txt", new IFileSystem.StringContent("seed"), WriteFileOptions.utf8()).join();
+
         DataSource appDs = TestDbHelper.createAppDataSource(dataSource);
         PgFileSystem fsApp = createFsApp(appDs, 1);
 
-        // fs_app tries to insert with session_id = 1 via fsApp but the RLS should allow it
+        // fs_app can insert into its own session
         fsApp.writeFile("/file.txt", new IFileSystem.StringContent("data"), WriteFileOptions.utf8()).join();
         assertThat(fsApp.exists("/file.txt").join()).isTrue();
     }
@@ -147,9 +151,8 @@ class RlsTest {
     }
 
     private PgFileSystem createFsApp(DataSource ds, long sessionId) throws SQLException {
-        PgFileSystem fs = new PgFileSystem(new PgFileSystemOptions(
+        // Schema is already set up by admin user; fs_app just needs to use it
+        return new PgFileSystem(new PgFileSystemOptions(
             ds, sessionId, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty()));
-        fs.setup();
-        return fs;
     }
 }

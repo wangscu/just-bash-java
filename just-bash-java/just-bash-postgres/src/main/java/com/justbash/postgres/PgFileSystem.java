@@ -784,6 +784,9 @@ public class PgFileSystem implements IFileSystem {
             FsRowMeta parent = getNodeMeta(conn, parentPosix);
             if (parent == null) throw new FsError("ENOENT", "no such file or directory, symlink", linkPath);
 
+            FsRowMeta existing = getNodeMeta(conn, p);
+            if (existing != null) throw new FsError("EEXIST", "file already exists, symlink", linkPath);
+
             String name = fileName(p);
             String lt = PathEncoding.pathToLtree(p, sessionId);
 

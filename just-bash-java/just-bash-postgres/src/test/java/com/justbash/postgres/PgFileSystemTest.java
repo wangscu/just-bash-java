@@ -418,7 +418,7 @@ class PgFileSystemTest {
 
     @Test
     void shouldThrowELOOPForSymlinkCycle() {
-        fs.writeFile("/a.txt", new IFileSystem.StringContent("a"), WriteFileOptions.utf8()).join();
+        fs.writeFile("/target.txt", new IFileSystem.StringContent("target"), WriteFileOptions.utf8()).join();
         fs.symlink("/b.txt", "/a.txt").join();
         fs.symlink("/a.txt", "/b.txt").join();
         assertThatThrownBy(() -> fs.readFile("/a.txt").join())
